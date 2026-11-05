@@ -1,216 +1,130 @@
-# Duke3D Makefile for GNU Make
-
-# Create Makefile.user yourself to provide your own overrides
-# for configurable values
--include Makefile.user
-
-##
-##
-## CONFIGURABLE OPTIONS
-##
-##
-
-# Engine options
-#  USE_POLYMOST   - enables Polymost renderer
-#  USE_OPENGL     - enables OpenGL support in Polymost
-#     Define as 0 to disable OpenGL
-#     Define as USE_GL2 (or 1 or 2) for GL 2.0/2.1 profile
-#     Define as USE_GL3 (or 3) for GL 3.2 Core profile
-#     Define as USE_GLES2 (or 12) for GLES 2.0 profile
-#  USE_ASM        - enables the use of assembly code if supported
+# Duke Nukem 3D (JFDuke3D, with JFBuild, JFMACT and JFAudioLib) on maxsdk: the PS2 port.
 #
-USE_POLYMOST ?= 1
-USE_OPENGL ?= 1
-USE_ASM ?= 1
+#   make submodules      the submodules, with ps2/patches applied (once)
+#   make [OUT=<dir>] [FRAMES=n] [ARGS="-v1 -l1"]   $(OUT)/duke3d.elf
+#   make run             duke3d.elf in PCSX2 with the game data in
+#                        build/pcsx2-test/duke3d (DUKEDATA: a directory with
+#                        DUKE3D.GRP, copied there once)
+#
+# Polymost, Build's GL renderer, draws through libs/libgl; ps2/ has the base
+# layer (video, input, timer), the GL table and the sound driver. The upstream
+# Makefile is Makefile.jf.
 
-# Debugging options
-#  RELEASE - 1 = optimised release build, no debugging aids
-RELEASE ?= 1
+HERE     := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+PS2MAX   ?= $(abspath $(HERE)/../..)
+MAXSDK   ?= $(PS2MAX)/libs/maxsdk
+MAXSDK_OUT ?= $(PS2MAX)/build/libs/maxsdk
+MXGL     ?= $(PS2MAX)/libs/libgl
+LIBOUT   := $(PS2MAX)/build/apps/duke3d
+OUT      ?= $(LIBOUT)
+# all in physical memory: the game fits, and PCSX2's recompiler has no VM
+MX_MEMORY ?= phys
+all: $(OUT)/duke3d.elf
+include $(MXGL)/mk/mxgl.mk
+include $(MAXSDK)/mk/maxsdk.mk
+MX_CORE_OBJS = $(MXGL_OBJS)
 
-# Path where game data is installed
-DATADIR ?= /usr/local/share/games/jfduke3d
+PICOLIBC_SRC ?= $(PS2MAX)/libs/picolibc
+# this port's picolibc (POSIX I/O), as apps/halflife's
+PICOLIBC := $(LIBOUT)/picolibc/install
+PICOLIBC_A := $(PICOLIBC)/lib/libc.a
+LIBRT    = $(MAXSDK_OUT)/librt.a
+LIBMXC_OBJS = $(OUT)/libc/glue.o $(MAXSDK_OUT)/libc/compat.c.o $(MAXSDK_OUT)/libc/atomic.c.o \
+              $(MAXSDK_OUT)/libc/malloc.c.o
+LIBC_LIBS = $(LIBMXC_OBJS) $(PICOLIBC_A) $(MX_LIB) $(LIBRT)
 
-##
-##
-## HERE BE DRAGONS
-##
-##
+TARGET   := --target=mips64el -mcpu=r5900 -mabi=n32 -fno-pic -mno-abicalls -G0
+OPT      ?= -O2
+JB       := $(HERE)/jfbuild
+JA       := $(HERE)/jfaudiolib
+JM       := $(HERE)/jfmact
+P        := $(HERE)/ps2
+DCFLAGS  := $(TARGET) $(OPT) -std=gnu99 -w -MMD -fno-common -ffunction-sections -fdata-sections \
+            -fno-strict-aliasing -fsigned-char -ffast-math -fapprox-func -mvu0 \
+            -nostdlibinc -isystem $(P)/include -isystem $(PICOLIBC)/include -D__PS2__ -D_GNU_SOURCE -DNDEBUG \
+            -DGL_GLEXT_PROTOTYPES -DUSE_POLYMOST=1 -DUSE_OPENGL=2 -DRENDERTYPESDL=1 -DHAVE_PS2 \
+            -I$(JB)/include -I$(JB)/src -I$(JM) -I$(JA)/include -I$(JA)/src -I$(HERE)/src -I$(P) \
+            -I$(OUT)/gen -I$(MXGL_INC) -I$(MAXSDK)/include $(MXGL_DEFS) $(EXTRA_CFLAGS)
+# the FPU has no doubles (ps2/ps2_float.h)
+FLOATFLAGS := -cl-single-precision-constant -include $(P)/ps2_float.h
 
-ENGINEROOT=jfbuild
-ENGINEINC=$(ENGINEROOT)/include
-MACTROOT=jfmact
-AUDIOLIBROOT=jfaudiolib
-SRC=src
-RSRC=rsrc
+ENGINE   := a-c asmprot baselayer cache1d compat crc32 defs engine kplib mmulti_null osd pragmas \
+            scriptfile textfont talltextfont smalltextfont polymost hightile mdsprite polymosttex \
+            polymosttexcache
+GAME     := game actors gamedef global menues player premap sector rts config osdfuncs osdcmds \
+            grpscan sounds version
+MACT     := util_lib file_lib control keyboard mouse mathutil scriplib animlib
+AUDIO    := asssys cd drivers driver_nosound fx_man midi mix mixst multivoc music pitch
+PS2SRC   := ps2_layer ps2_gl ps2_posix ps2_audio ps2_softfp
 
-CC?=gcc
-CXX?=g++
-RC?=windres
+OBJS     := $(patsubst %,$(OUT)/jb/%.o,$(ENGINE)) $(patsubst %,$(OUT)/game/%.o,$(GAME)) \
+            $(patsubst %,$(OUT)/mact/%.o,$(MACT)) $(patsubst %,$(OUT)/audio/%.o,$(AUDIO)) \
+            $(patsubst %,$(OUT)/ps2/%.o,$(PS2SRC))
 
-OURCFLAGS=-g -W -Wall -fno-strict-aliasing -std=c99
-OURCXXFLAGS=-g -W -Wall -fno-exceptions -fno-rtti -std=c++98
-OURCPPFLAGS=-I$(SRC) -I$(ENGINEINC) -I$(MACTROOT) -I$(AUDIOLIBROOT)/include
-OURLDFLAGS=
+CDEPS    := $(PICOLIBC_A) $(OUT)/gen/runcfg.h
+$(OUT)/jb/polymost.o $(OUT)/jb/mdsprite.o $(OUT)/jb/hightile.o $(OUT)/jb/defs.o $(OUT)/jb/scriptfile.o: DCFLAGS += $(FLOATFLAGS)
+$(OUT)/jb/%.o: $(JB)/src/%.c $(CDEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(DCFLAGS) -c $< -o $@
+$(OUT)/game/%.o: $(HERE)/src/%.c $(CDEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(DCFLAGS) -c $< -o $@
+$(OUT)/mact/%.o: $(JM)/%.c $(CDEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(DCFLAGS) -c $< -o $@
+$(OUT)/audio/%.o: $(JA)/src/%.c $(CDEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(DCFLAGS) -c $< -o $@
+$(OUT)/ps2/%.o: $(P)/%.c $(CDEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(DCFLAGS) -c $< -o $@
 
-ifneq ($(RELEASE),0)
-	# Default optimisation settings
-	CFLAGS?=-fomit-frame-pointer -O1
-	CXXFLAGS?=-fomit-frame-pointer -O1
-else
-	CFLAGS?=-Og
-	CXXFLAGS?=-Og
-endif
+# maxsdk's libc glue with its read, write and _exit renamed: ps2/ps2_posix.c
+# has the POSIX ones
+$(OUT)/libc/glue.o: $(MAXSDK)/libc/glue.c $(PICOLIBC_A) $(HERE)/Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(filter-out -ffreestanding,$(CFLAGS)) -nostdlibinc -isystem $(PICOLIBC)/include \
+	  -Dread=mx_glue_read -Dwrite=mx_glue_write -D_exit=mx_glue_exit -c $< -o $@
 
-# Filename extensions, used in Makefile.deps etc
-o=o
-res=o
+# FRAMES: end after that many frames with a picture (host:duke3d.tga);
+# PLAY: walk by scripted pad input; STATS: libgl's counters on (or R3);
+# PROF: profile the run's second half, or from frame n; ARGS: more of the command line;
+# MODE: libgl's mode whatever the settings (1 NTSC, 2 PAL, 3 1080i, +256 beam racing, +512 24-bit)
+# KEYS: pad keys by script from frame 300, each 30 frames: s, x, o, u, d, l, r, . none
+RUNCFG := $(OUT)/gen/runcfg.h
+$(shell mkdir -p $(OUT)/gen; printf '#define PS2_FRAMES %s\n#define PS2_ARGS "%s"\n#define PS2_PLAY %s\n#define PS2_PROF %s\n#define PS2_STATS %s\n#define PS2_MODE (%s)\n#define PS2_KEYS "%s"\n' \
+  '$(or $(FRAMES),0)' '$(ARGS)' '$(or $(PLAY),0)' '$(or $(PROF),0)' '$(or $(STATS),0)' '$(or $(MODE),-1)' '$(KEYS)' > $(RUNCFG).new; \
+  cmp -s $(RUNCFG).new $(RUNCFG) || mv $(RUNCFG).new $(RUNCFG); rm -f $(RUNCFG).new)
 
-include $(ENGINEROOT)/Makefile.shared
+# -z muldefs: ps2/ps2_softfp.c's double arithmetic before librt's
+$(MXGL_OBJS): $(PICOLIBC_A)
+$(OUT)/duke3d.elf: $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD) $(LIBC_LIBS)
+	$(call link,$@,-z muldefs --defsym=__stack_size=0x100000 $(MX_CRT0) $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(LIBC_LIBS))
 
-# Apply shared flags
-OURCFLAGS+= $(BUILDCFLAGS)
-OURCXXFLAGS+= $(BUILDCXXFLAGS)
-OURCPPFLAGS+= $(BUILDCPPFLAGS)
-OURLDFLAGS+= $(BUILDLDFLAGS)
+$(PICOLIBC_A):
+	@mkdir -p $(LIBOUT)/picolibc
+	sed "s|@LLVM@|$(LLVM)|g" $(MAXSDK)/libc/cross-r5900.txt.in > $(LIBOUT)/picolibc/cross.txt
+	meson setup --wipe $(LIBOUT)/picolibc/build-meson $(PICOLIBC_SRC) \
+	  --cross-file $(LIBOUT)/picolibc/cross.txt --prefix=$(PICOLIBC) -Dmultilib=false \
+	  -Dpicocrt=false -Dsemihost=false -Dtests=false -Dthread-local-storage=false \
+	  -Dposix-io=true -Dspecsdir=none -Dio-long-long=true -Dbuildtype=release
+	ninja -C $(LIBOUT)/picolibc/build-meson install
 
-include $(AUDIOLIBROOT)/Makefile.shared
+submodules:
+	git submodule update --init jfbuild jfmact jfaudiolib
+	ps2/patches.sh apply
 
-OURLDFLAGS+= $(JFAUDIOLIB_LDFLAGS)
+# ---- running --------------------------------------------------------------------
+DUKEDATA ?= .
+RUNDIR   := $(PS2MAX)/build/pcsx2-test
+run: $(OUT)/duke3d.elf
+	@mkdir -p $(RUNDIR)/duke3d
+	@[ -f $(RUNDIR)/duke3d/duke3d.grp ] || cp -v "$(DUKEDATA)/DUKE3D.GRP" $(RUNDIR)/duke3d/duke3d.grp
+	$(PCSX2_RUN) $(OUT)/duke3d.elf $(or $(TIMEOUT),300)
 
-GAMEOBJS=$(SRC)/game.$o \
-	$(SRC)/actors.$o \
-	$(SRC)/gamedef.$o \
-	$(SRC)/global.$o \
-	$(SRC)/menues.$o \
-	$(SRC)/player.$o \
-	$(SRC)/premap.$o \
-	$(SRC)/sector.$o \
-	$(SRC)/rts.$o \
-	$(SRC)/config.$o \
-	$(SRC)/osdfuncs.$o \
-	$(SRC)/osdcmds.$o \
-	$(SRC)/grpscan.$o \
-	$(SRC)/sounds.$o
+clean:
+	rm -rf $(filter-out $(LIBOUT)/picolibc,$(wildcard $(OUT)/*))
 
-GAMEOBJS+= \
-	$(MACTROOT)/util_lib.$o \
-	$(MACTROOT)/file_lib.$o \
-	$(MACTROOT)/control.$o \
-	$(MACTROOT)/keyboard.$o \
-	$(MACTROOT)/mouse.$o \
-	$(MACTROOT)/mathutil.$o \
-	$(MACTROOT)/scriplib.$o \
-	$(MACTROOT)/animlib.$o
+.PHONY: all submodules run clean
 
-EDITOROBJS=$(SRC)/astub.$o
-
-# Specialise for the platform
-ifeq ($(PLATFORM),LINUX)
-	OURLDFLAGS+= $(JFAUDIOLIB_LDFLAGS)
-	OURCPPFLAGS+= -DDATADIR=\"$(DATADIR)\"
-endif
-ifeq ($(PLATFORM),BSD)
-	OURLDFLAGS+= $(JFAUDIOLIB_LDFLAGS) -pthread
-	OURCPPFLAGS+= -DDATADIR=\"$(DATADIR)\"
-endif
-ifeq ($(PLATFORM),WINDOWS)
-	GAMEOBJS+= $(SRC)/gameres.$(res) \
-		$(SRC)/startwin_game.$o
-	EDITOROBJS+= $(SRC)/buildres.$(res)
-endif
-ifeq ($(PLATFORM),DARWIN)
-	OURLDFLAGS+= -framework Foundation
-endif
-
-ifeq ($(RENDERTYPE),SDL)
-	OURCFLAGS+= $(SDLCONFIG_CFLAGS)
-	OURLDFLAGS+= $(SDLCONFIG_LIBS)
-
-	ifeq (1,$(HAVE_GTK))
-		OURCFLAGS+= $(GTKCONFIG_CFLAGS)
-		OURLDFLAGS+= $(GTKCONFIG_LIBS)
-
-		GAMEOBJS+= $(SRC)/startgtk_game.$o \
-			$(RSRC)/startgtk_game_gresource.$o
-		EDITOROBJS+= $(RSRC)/startgtk_build_gresource.$o
-	endif
-
-	GAMEOBJS+= $(RSRC)/game_bmp.$o
-	EDITOROBJS+= $(RSRC)/build_bmp.$o
-endif
-
-# Source-control version stamping
-ifneq (,$(findstring git version,$(shell git --version)))
-GAMEOBJS+= $(SRC)/version-auto.$o
-EDITOROBJS+= $(SRC)/version-auto.$o
-else
-GAMEOBJS+= $(SRC)/version.$o
-EDITOROBJS+= $(SRC)/version.$o
-endif
-
-# TARGETS
-.PHONY: clean veryclean all
-all: duke3d$(EXESUFFIX) build$(EXESUFFIX)
-
-include Makefile.deps
-
-$(ENGINEROOT)/%:
-	$(MAKE) -C $(@D) -f Makefile \
-		USE_POLYMOST=$(USE_POLYMOST) \
-		USE_OPENGL=$(USE_OPENGL) \
-		USE_ASM=$(USE_ASM) \
-		RELEASE=$(RELEASE) $(@F)
-
-$(AUDIOLIBROOT)/%:
-	$(MAKE) -C $(@D) \
-		RELEASE=$(RELEASE) $(@F)
-
-duke3d$(EXESUFFIX): $(GAMEOBJS) $(ENGINEROOT)/$(ENGINELIB) $(AUDIOLIBROOT)/$(JFAUDIOLIB)
-	$(CXX) $(CPPFLAGS) $(OURCPPFLAGS) $(CXXFLAGS) $(OURCXXFLAGS) -o $@ $^ $(LDFLAGS) $(OURLDFLAGS)
-
-build$(EXESUFFIX): $(EDITOROBJS) $(ENGINEROOT)/$(EDITORLIB) $(ENGINEROOT)/$(ENGINELIB)
-	$(CXX) $(CPPFLAGS) $(OURCPPFLAGS) $(CXXFLAGS) $(OURCXXFLAGS) -o $@ $^ $(LDFLAGS) $(OURLDFLAGS)
-
-# RULES
-$(SRC)/%.$o: $(SRC)/%.c
-	$(CC) $(CPPFLAGS) $(OURCPPFLAGS) $(CFLAGS) $(OURCFLAGS) -c $< -o $@
-
-$(SRC)/%.$o: $(SRC)/%.m
-	$(CC) $(CPPFLAGS) $(OURCPPFLAGS) $(CFLAGS) $(OURCFLAGS) -c $< -o $@
-
-$(MACTROOT)/%.$o: $(MACTROOT)/%.c
-	$(CC) $(CPPFLAGS) $(OURCPPFLAGS) $(CFLAGS) $(OURCFLAGS) -c $< -o $@
-
-$(RSRC)/%.$o: $(RSRC)/%.c
-	$(CC) $(CPPFLAGS) $(OURCPPFLAGS) $(CFLAGS) $(OURCFLAGS) -c $< -o $@
-
-$(SRC)/%.$(res): $(SRC)/%.rc
-	$(RC) -i $< -o $@ --include-dir=$(SRC) --include-dir=$(ENGINEINC)
-
-$(RSRC)/%_gresource.c: $(RSRC)/%.gresource.xml
-	glib-compile-resources --generate-source --manual-register --c-name=startgtk --target=$@ --sourcedir=$(RSRC) $<
-$(RSRC)/%_gresource.h: $(RSRC)/%.gresource.xml
-	glib-compile-resources --generate-header --manual-register --c-name=startgtk --target=$@ --sourcedir=$(RSRC) $<
-
-$(RSRC)/%_bmp.c: $(RSRC)/%.bmp | $(ENGINEROOT)/bin2c$(EXESUFFIX)
-	$(ENGINEROOT)/bin2c$(EXESUFFIX) $< appicon_bmp > $@
-$(RSRC)/%.bmp: $(RSRC)/%.png
-	$(shell which magick convert true | head -1) $< $@
-
-# PHONIES
-clean::
-	-rm -f $(GAMEOBJS) $(EDITOROBJS)
-veryclean:: clean
-	-rm -f duke3d$(EXESUFFIX) build$(EXESUFFIX) core*
-
-clean::
-	$(MAKE) -C $(ENGINEROOT) $@
-	$(MAKE) -C $(AUDIOLIBROOT) $@
-veryclean::
-	$(MAKE) -C $(ENGINEROOT) $@
-
-.PHONY: $(SRC)/version-auto.c
-$(SRC)/version-auto.c:
-	printf "const char *game_version = \"%s\";\n" "$(shell git describe --always || echo git error)" > $@
-	echo "const char *game_date = __DATE__;" >> $@
-	echo "const char *game_time = __TIME__;" >> $@
+-include $(shell find $(OUT) -name '*.d' -not -path '*/picolibc/*' 2>/dev/null)

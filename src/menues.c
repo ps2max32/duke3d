@@ -643,6 +643,11 @@ int saveplayer(signed char spot)
     return(0);
 }
 
+#ifdef __PS2__
+#include "ps2_port.h"
+extern char videomodereset;
+#endif
+
 static void preparevideomenu(void)
 {
     int dax, day;
@@ -680,6 +685,17 @@ void onvideomodechange(void)
 
     preparevideomenu();
 }
+
+#ifdef __PS2__
+// from showframe, between frames: the menu's change of the screen
+void ps2_video_changed(void)
+{
+    videomodereset = 1;
+    setgamemode(SETGAMEMODE_FULLSCREEN(ScreenDisplay,ScreenMode),ScreenWidth,ScreenHeight,ScreenBPP);
+    videomodereset = 0;
+    onvideomodechange();
+}
+#endif
 
 static int probe_(int type,int x,int y,int i,int n,const int *keys)
 {
@@ -2366,6 +2382,82 @@ if (!VOLUMEALL) {
             gametext(160,158,"Classic defaults applied",0,2+8+16);
         break;
 
+#ifdef __PS2__
+    case 203:   // Video settings: X or left/right changes a line, at once.
+        rotatesprite(320<<15,19<<16,65536L,0,MENUBAR,16,0,10,0,0,xdim-1,ydim-1);
+        menutext(320>>1,24,0,0,"VIDEO SETTINGS");
+
+        c = (320>>1)-120;
+        onbar = (probey == 4);
+        x = probe(c+6,50,16,6);
+        if (x == -1) {
+            CONFIG_WriteSetup(); // a console is switched off, not quit
+            cmenu(200);
+            probey = 2;
+            break;
+        }
+        {
+            // a press, not uinfo.dir: that repeats, and a mode takes a moment
+            static int held;
+            int now = KB_KeyDown[sc_LeftArrow] ? -1 : KB_KeyDown[sc_RightArrow] ? 1 : 0;
+            if (probey != 4 && now && !held) {
+                sound(PISTOL_BODYHIT);
+                x = probey;
+            }
+            held = now;
+            if (x == 3 && now < 0) ps2_tex_quality += 2; // back: + 3, with the + 1 below
+        }
+        switch (x) {
+            case 0:
+                ps2_vid_hd = !ps2_vid_hd;
+                ps2_video_change();
+                break;
+            case 1:
+                ps2_vid_beam = !ps2_vid_beam;
+                ps2_video_change();
+                break;
+            case 2:
+                ps2_vid_rgb24 = !ps2_vid_rgb24;
+                ps2_video_change();
+                break;
+            case 3: // auto, then 0, 1, 2 levels left out
+                ps2_tex_quality = (ps2_tex_quality + 2) % 4 - 1;
+                ps2_tex_apply();
+                break;
+            case 5:
+                gltexfiltermode = gltexfiltermode == 5 ? 0 : 5;
+                gltexapplyprops();
+                break;
+        }
+
+        menutext(c,50,0,0,"RESOLUTION");
+        gametext(c+154,50-8,ps2_vid_hd ? "1080I (1920 X 1080)" : "TV (NTSC/PAL)",0,2+8+16);
+        menutext(c,50+16,0,0,"BEAM RACING");
+        gametext(c+154,50+16-8,ps2_vid_beam ? "ON" : "OFF",0,2+8+16);
+        menutext(c,50+32,0,0,"COLOUR");
+        gametext(c+154,50+32-8,ps2_vid_rgb24 ? (ps2_vid_beam && !ps2_vid_hd ? "24-BIT" : "16 (24: TV+BEAM)") : "16-BIT",0,2+8+16);
+        menutext(c,50+48,0,0,"TEXTURES");
+        {
+            static const char *const q[] = {"AUTO", "FULL", "1 LEVEL LESS", "2 LEVELS LESS"};
+            gametext(c+154,50+48-8,q[ps2_tex_quality+1],0,2+8+16);
+        }
+        menutext(c,50+64,SHX(-6),PHX(-6),"BRIGHTNESS");
+        {
+            short ss = ud.brightness;
+            bar(c+167,50+64,&ss,8,x==4,SHX(-6),PHX(-6));
+            if (x==4) {
+                ud.brightness = ss;
+                setbrightness(ud.brightness>>2,&ps[myconnectindex].palette[0],0);
+            }
+        }
+        menutext(c,50+80,0,0,"FILTERING");
+        gametext(c+154,50+80-8,gltexfiltermode == 5 ? "TRILINEAR" : gltexfiltermode == 3 ? "BILINEAR" : "NEAREST",0,2+8+16);
+
+        gametext(160,140,"BEAM RACING: MORE ROOM FOR TEXTURES,",0,2+8+16);
+        gametext(160,149,"AT MOST 60 (PAL 50) FRAMES A SECOND",0,2+8+16);
+        gametext(160,158,"1080I: A TV THAT TAKES IT, COMPONENT CABLE",0,2+8+16);
+        break;
+#else
     case 203:   // Video settings.
         rotatesprite(320<<15,19<<16,65536L,0,MENUBAR,16,0,10,0,0,xdim-1,ydim-1);
         menutext(320>>1,24,0,0,"VIDEO SETTINGS");
@@ -2508,6 +2600,7 @@ if (!VOLUMEALL) {
             menutext(c+154,50+62+16+16,0,bpp==8,buf);
 #endif
         break;
+#endif
 
     case 204:
             rotatesprite(320<<15,10<<16,65536L,0,MENUBAR,16,0,10,0,0,xdim-1,ydim-1);

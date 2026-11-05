@@ -1,0 +1,949 @@
+diff --git a/include/compat.h b/include/compat.h
+index 387f121..2e371b1 100644
+--- a/include/compat.h
++++ b/include/compat.h
+@@ -100,7 +100,13 @@ typedef unsigned __int64 uint64_t;
+ # define NULL ((void *)0)
+ #endif
+ 
+-#if defined(__linux) || defined(__HAIKU__)
++#if defined(__PS2__)
++# define B_LITTLE_ENDIAN 1
++# define B_BIG_ENDIAN    0
++# define B_SWAP64(x) __builtin_bswap64(x)
++# define B_SWAP32(x) __builtin_bswap32(x)
++# define B_SWAP16(x) __builtin_bswap16(x)
++#elif defined(__linux) || defined(__HAIKU__)
+ # include <endian.h>
+ # if __BYTE_ORDER == __LITTLE_ENDIAN
+ #  define B_LITTLE_ENDIAN 1
+diff --git a/src/engine.c b/src/engine.c
+index d57f32a..9fd0e90 100644
+--- a/src/engine.c
++++ b/src/engine.c
+@@ -5908,7 +5908,14 @@ killsprite:
+ 			{
+ #if USE_POLYMOST
+ 				if (rendmode > 0)
+-					l = dxb1[j] <= (double)spritesx[i]/256.0 && (double)spritesx[i]/256.0 <= dxb2[j];
++					{
++#ifdef __PS2__
++						float sx = (float)spritesx[i]/256.f;
++#else
++						double sx = (double)spritesx[i]/256.0;
++#endif
++						l = dxb1[j] <= sx && sx <= dxb2[j];
++					}
+ 				else
+ #endif
+ 					l = xb1[j] <= (spritesx[i]>>8) && (spritesx[i]>>8) <= xb2[j];
+@@ -7919,6 +7926,15 @@ int setgamemode(int dafullscreen, int daxdim, int daydim, int dabpp)
+ 			pixelaspect = divscale16(ydim*320L,xdim*200L);
+ 		}
+ 	}
++#ifdef __PS2__
++	// 640 x 448 and 640 x 512 fill a 4:3 TV: the pixels are not square,
++	// so neither is wide or tall. 1920 x 1080 is square, a 16:9 screen.
++	if (xdim == 640) {
++		widescreen = 0;
++		tallscreen = 1;
++		pixelaspect = divscale16(ydim*320L,xdim*200L);
++	}
++#endif
+ 
+ 	j = ydim*4*sizeof(int);  //Leave room for horizlookup&horizlookup2
+ 
+@@ -7942,7 +7958,15 @@ int setgamemode(int dafullscreen, int daxdim, int daydim, int dabpp)
+ 	setview(0L,0L,xdim-1,ydim-1);
+ 
+ #if USE_POLYMOST && USE_OPENGL
++#ifdef __PS2__
++	// libgl keeps the textures over a mode change: building them again
++	// would take seconds in the middle of a level
++	static int glready;
++	if (rendmode == 3 && !glready) {
++		glready = 1;
++#else
+ 	if (rendmode == 3) {
++#endif
+ 		polymost_glreset();
+ 		polymost_glinit();
+ 	}
+@@ -11305,7 +11329,7 @@ int getrendermode(void)
+ void setrollangle(int rolla)
+ {
+ 	if (rolla == 0) gtang = 0.0;
+-	else gtang = PI * (double)rolla / 1024.0;
++	else gtang = (float)PI * (float)rolla / 1024.f;
+ }
+ 
+ #endif //USE_POLYMOST
+diff --git a/src/polymost.c b/src/polymost.c
+index 5fbeb33..3cdf0e5 100644
+--- a/src/polymost.c
++++ b/src/polymost.c
+@@ -84,7 +84,11 @@ Low priority:
+ #endif
+ 
+ int rendmode = 0;
++#ifdef __PS2__
++int usemodels=0, usehightile=0, usegoodalpha=0;
++#else
+ int usemodels=1, usehightile=1, usegoodalpha=0;
++#endif
+ 
+ #include <math.h> //<-important!
+ typedef struct { float x, cy[2], fy[2]; int n, p, tag, ctag, ftag; } vsptyp;
+@@ -118,6 +122,7 @@ int zbufysiz = 0, zbufbpl = 0, *zbufoff = 0;
+ #if USE_OPENGL
+ int gfogpalnum = 0;
+ float gfogdensity = 0.f;
++static float gvsx0, gvsx1;  // the view's span in screen x
+ 
+ int glredbluemode = 0;
+ static int lastglredbluemode = 0, redblueclearcnt = 0;
+@@ -132,10 +137,18 @@ struct glfiltermodes glfiltermodes[numglfiltermodes] = {
+ };
+ 
+ int glanisotropy = 0;            // 0 = maximum supported by card
++#ifdef __PS2__
++int glusetexcompr = 0;
++#else
+ int glusetexcompr = 1;
++#endif
+ int gltexcomprquality = 0;	// 0 = fast, 1 = slow and pretty, 2 = very slow and pretty
+ int gltexfiltermode = 5;   // GL_LINEAR_MIPMAP_LINEAR
++#ifdef __PS2__
++int glusetexcache = 0;
++#else
+ int glusetexcache = 1;
++#endif
+ int glmultisample = 0, glnvmultisamplehint = 0, glsampleshading = 0;
+ int gltexmaxsize = 0;      // 0 means autodetection on first run
+ int gltexmiplevel = 0;		// discards this many mipmap levels
+@@ -686,6 +699,85 @@ static void polymost_loadshaders(void)
+ 	checkindexbuffer(MINVBOINDEXES);
+ }
+ 
++#ifdef __PS2__
++// libgl's fixed function: GL 1.1 calls straight, not through glfunc
++#include <mxgl.h>
++static const GLfloat *ps2_projection;
++static float ps2_fog = -1.f, ps2_alphacut = -1.f;
++
++static void polymost_ps2_glinit(void)
++{
++	glEnable(GL_TEXTURE_2D);
++	glEnable(GL_SHARED_TEXTURE_PALETTE_EXT);
++	glEnableClientState(GL_VERTEX_ARRAY);
++	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
++	glDisableClientState(GL_COLOR_ARRAY);
++	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
++	glFogi(GL_FOG_MODE, GL_EXP2);
++	glMatrixMode(GL_MODELVIEW);
++	glLoadIdentity();
++	glMatrixMode(GL_PROJECTION);
++	ps2_projection = 0;
++	ps2_fog = ps2_alphacut = -1.f;
++
++	// A solid white texture for draws without one
++	{
++		static const unsigned int white = 0xffffffffu;
++		glfunc.glGenTextures(1, &nulltexture);
++		glfunc.glBindTexture(GL_TEXTURE_2D, nulltexture);
++		glfunc.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, &white);
++		glfunc.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++		glfunc.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++	}
++}
++
++static void ps2_setprojection(const GLfloat *m)
++{
++	if (m != ps2_projection) {
++		ps2_projection = m;
++		glLoadMatrixf(m);
++	}
++}
++
++static void ps2_setalphacut(float cut)
++{
++	if (cut == ps2_alphacut) return;
++	ps2_alphacut = cut;
++	if (cut > 0.f) {
++		glEnable(GL_ALPHA_TEST);
++		glAlphaFunc(GL_GREATER, cut);
++	} else {
++		glDisable(GL_ALPHA_TEST);
++	}
++}
++
++// polymost_fs.glsl's fog is GL_EXP2 of density * dist, its dist the window z
++// over the fragment's w: about half of the vertex's w, which is what libgl's
++// fog measures.
++static void ps2_setfog(float density, const coltypef *colour)
++{
++	if (density == ps2_fog) return;
++	if (density <= 0.f) {
++		if (ps2_fog > 0.f) glDisable(GL_FOG);
++	} else {
++		if (ps2_fog <= 0.f) glEnable(GL_FOG);
++		glFogf(GL_FOG_DENSITY, density * 0.5f);
++		glFogfv(GL_FOG_COLOR, &colour->r);
++	}
++	ps2_fog = density;
++}
++#endif
++
++#ifdef __PS2__
++// The sky behind all else, at the far end of the depth range: its plane is
++// no further than a sprite after libgl's depth, and sprites are tested against
++// it (the fence on the roof of E1L1 was hidden)
++static void ps2_skydepth(int on)
++{
++	glDepthRange(on ? 0.99999 : 0.00001, 1.0);
++}
++#endif
++
+ // one-time initialisation of OpenGL for polymost
+ void polymost_glinit(void)
+ {
+@@ -712,7 +804,11 @@ void polymost_glinit(void)
+ #endif
+ 	}
+ 
++#ifdef __PS2__
++	polymost_ps2_glinit();
++#else
+ 	polymost_loadshaders();
++#endif
+ }
+ 
+ void resizeglcheck (void)
+@@ -788,6 +884,28 @@ void polymost_drawpoly_glcall(GLenum mode, struct polymostdrawpolycall *draw)
+ 	polymostcallcounts.drawpoly_glcall++;
+ #endif
+ 
++#ifdef __PS2__
++	if (draw->elementbuffer > 0) return;	// models: not on the PS2
++	ps2_setprojection(draw->projection);
++	ps2_setalphacut(draw->alphacut);
++	ps2_setfog(draw->fogdensity, &draw->fogcolour);
++	glfunc.glBindTexture(GL_TEXTURE_2D, draw->texture0);
++	glColor4f(draw->colour.r, draw->colour.g, draw->colour.b, draw->colour.a);
++	glVertexPointer(3, GL_FLOAT, sizeof(struct polymostvboitem), &draw->elementvbo->v);
++	glTexCoordPointer(2, GL_FLOAT, sizeof(struct polymostvboitem), &draw->elementvbo->t);
++	glDrawArrays(mode, 0, draw->indexcount);
++	// the fullbright texels: polymost_fs.glsl's glow texture, as a second pass
++	if (draw->texture1 && draw->texture1 != nulltexture) {
++		static const coltypef nofog = { 0.f, 0.f, 0.f, 0.f };
++		ps2_setalphacut(0.5f);
++		ps2_setfog(0.f, &nofog);
++		glfunc.glBindTexture(GL_TEXTURE_2D, draw->texture1);
++		glColor4f(1.f, 1.f, 1.f, draw->colour.a);
++		glDrawArrays(mode, 0, draw->indexcount);
++	}
++	return;
++#endif
++
+ 	glfunc.glUseProgram(polymostglsl.program);
+ 
+ #if (USE_OPENGL == USE_GL3)
+@@ -853,12 +971,42 @@ void polymost_drawpoly_glcall(GLenum mode, struct polymostdrawpolycall *draw)
+ #endif
+ }
+ 
++#ifdef __PS2__
++// polymostaux_fs.glsl's modes. Mode 0: the texture's alpha picks the colour
++// or the background; 1: the texture as it is; 2: the colour alone.
++static void polymost_ps2_drawaux(GLenum mode, struct polymostdrawauxcall *draw)
++{
++	static const coltypef nofog = { 0.f, 0.f, 0.f, 0.f };
++	ps2_setprojection(&gorthoprojmat[0][0]);
++	ps2_setfog(0.f, &nofog);
++	glVertexPointer(3, GL_FLOAT, sizeof(struct polymostvboitem), &draw->elementvbo->v);
++	glTexCoordPointer(2, GL_FLOAT, sizeof(struct polymostvboitem), &draw->elementvbo->t);
++	if (draw->mode == 0 && draw->bgcolour.a > 0.f) {
++		ps2_setalphacut(0.f);
++		glfunc.glBindTexture(GL_TEXTURE_2D, nulltexture);
++		glColor4f(draw->bgcolour.r, draw->bgcolour.g, draw->bgcolour.b, draw->bgcolour.a);
++		if (draw->indexes) glDrawElements(mode, draw->indexcount, GL_UNSIGNED_SHORT, draw->indexes);
++		else glDrawArrays(mode, 0, draw->indexcount);
++	}
++	ps2_setalphacut(draw->mode == 0 ? 0.5f : 0.f);
++	glfunc.glBindTexture(GL_TEXTURE_2D, draw->mode == 2 ? nulltexture : draw->texture0);
++	glColor4f(draw->colour.r, draw->colour.g, draw->colour.b, draw->colour.a);
++	if (draw->indexes) glDrawElements(mode, draw->indexcount, GL_UNSIGNED_SHORT, draw->indexes);
++	else glDrawArrays(mode, 0, draw->indexcount);
++}
++#endif
++
+ static void polymost_drawaux_glcall(GLenum mode, struct polymostdrawauxcall *draw)
+ {
+ #ifdef DEBUGGINGAIDS
+ 	polymostcallcounts.drawaux_glcall++;
+ #endif
+ 
++#ifdef __PS2__
++	polymost_ps2_drawaux(mode, draw);
++	return;
++#endif
++
+ 	glfunc.glUseProgram(polymostauxglsl.program);
+ 
+ #if (USE_OPENGL == USE_GL3)
+@@ -992,6 +1140,7 @@ void drawpoly (double *dpx, double *dpy, int n, int method)
+ 	double ngvx = 0.0, ngvy = 0.0, ngvo = 0.0, dp, up, vp, rdp;
+ 	double ngdx2, ngux2, ngvx2;
+ 	double f, r, ox, oy, oz, ox2, oy2, oz2, dd[16], uu[16], vv[16], px[16], py[16];
++	double pd0 = 0, pu0 = 0, pv0 = 0;
+ 	int i, j, k, x, y, z, ix0, ix1, mini, maxi, tsizx, tsizy, tsizxm1 = 0, tsizym1 = 0, ltsizy = 0;
+ 	int xx, yy, xi, d0, u0, v0, d1, u1, v1, xmodnice = 0, ymulnice = 0, dorot;
+ 	unsigned char dacol = 0, *walptr, *palptr = NULL, *vidp, *vide;
+@@ -1053,9 +1202,24 @@ void drawpoly (double *dpx, double *dpy, int n, int method)
+ 
+ 			r = ghalfx / oz;
+ 
++#ifdef __PS2__
++			// as below: the planes in double for the first vertex only
++			if (!i) {
++				pd0 = dpx[0]*gdx + dpy[0]*gdy + gdo;
++				pu0 = dpx[0]*gux + dpy[0]*guy + guo;
++				pv0 = dpx[0]*gvx + dpy[0]*gvy + gvo;
++				dd[j] = pd0*r; uu[j] = pu0*r; vv[j] = pv0*r;
++			} else {
++				float ax = dpx[i]-dpx[0], ay = dpy[i]-dpy[0];
++				dd[j] = (pd0 + ax*(float)gdx + ay*(float)gdy)*r;
++				uu[j] = (pu0 + ax*(float)gux + ay*(float)guy)*r;
++				vv[j] = (pv0 + ax*(float)gvx + ay*(float)gvy)*r;
++			}
++#else
+ 			dd[j] = (dpx[i]*gdx + dpy[i]*gdy + gdo)*r;
+ 			uu[j] = (dpx[i]*gux + dpy[i]*guy + guo)*r;
+ 			vv[j] = (dpx[i]*gvx + dpy[i]*gvy + gvo)*r;
++#endif
+ 
+ 			px[j] = ox*r + ghalfx;
+ 			py[j] = oy*r + ghoriz;
+@@ -1093,6 +1257,9 @@ void drawpoly (double *dpx, double *dpy, int n, int method)
+ 		if (drawingskybox) ptflags |= PTH_SKYBOX;
+ 
+ 		pth = PT_GetHead(globalpicnum, globalpal, ptflags, 0);
++#ifdef __PS2__
++		if (!pth) return;	// made in a later frame
++#endif
+ 
+ 		// Base texture.
+ 		draw.texture0 = 0;
+@@ -1145,12 +1312,31 @@ void drawpoly (double *dpx, double *dpy, int n, int method)
+ 
+ 		if (!dorot)
+ 		{
++#ifdef __PS2__
++			// The planes' origins are far from the screen, so a plane is evaluated
++			// in double, once: a vertex is the first one plus its offset on the
++			// screen, which float does as well
++			{
++				float fdx = gdx, fdy = gdy, fux = gux, fuy = guy, fvx = gvx, fvy = gvy;
++				dd[0] = px[0]*gdx + py[0]*gdy + gdo;
++				uu[0] = px[0]*gux + py[0]*guy + guo;
++				vv[0] = px[0]*gvx + py[0]*gvy + gvo;
++				for(i=1;i<n;i++)
++				{
++					float ax = px[i]-px[0], ay = py[i]-py[0];
++					dd[i] = dd[0] + ax*fdx + ay*fdy;
++					uu[i] = uu[0] + ax*fux + ay*fuy;
++					vv[i] = vv[0] + ax*fvx + ay*fvy;
++				}
++			}
++#else
+ 			for(i=n-1;i>=0;i--)
+ 			{
+ 				dd[i] = px[i]*gdx + py[i]*gdy + gdo;
+ 				uu[i] = px[i]*gux + py[i]*guy + guo;
+ 				vv[i] = px[i]*gvx + py[i]*gvy + gvo;
+ 			}
++#endif
+ 		}
+ 
+ 		draw.colour.r = draw.colour.g = draw.colour.b =
+@@ -1226,8 +1412,16 @@ void drawpoly (double *dpx, double *dpy, int n, int method)
+ 			}
+ 
+ 			f = 1.0/(double)tsizx;
++#ifdef __PS2__
++			// A vertex on the depth plane makes these huge. The R5900 turns such
++			// a float into INT_MAX, and the loop below would never pass ix1
++			if (!((fabs(du0*f) < 1000000.f) && (fabs(du1*f) < 1000000.f))) return;
++#endif
+ 			ix0 = (int)floor(du0*f);
+ 			ix1 = (int)floor(du1*f);
++#ifdef __PS2__
++			if (ix1 - ix0 > 1024) ix1 = ix0 + 1024;
++#endif
+ 			if (!isinf(f)) for(;ix0<=ix1;ix0++)
+ 			{
+ 				du0 = (double)((ix0  )*tsizx); // + uoffs;
+@@ -1772,7 +1966,8 @@ static int testvisiblemost (float x0, float x1)
+ 	for(i=vsp[0].n;i;i=newi)
+ 	{
+ 		newi = vsp[i].n;
+-		if ((x0 < vsp[newi].x) && (vsp[i].x < x1) && (vsp[i].ctag >= 0)) return(1);
++		if (vsp[i].x >= x1) break;	// the list is sorted by x
++		if ((x0 < vsp[newi].x) && (vsp[i].ctag >= 0)) return(1);
+ 	}
+ 	return(0);
+ }
+@@ -1807,7 +2002,8 @@ static void domost (float x0, float y0, float x1, float y1, int polymethod)
+ 	for(i=vsp[0].n;i;i=newi)
+ 	{
+ 		newi = vsp[i].n; nx0 = vsp[i].x; nx1 = vsp[newi].x;
+-		if ((x0 >= nx1) || (nx0 >= x1) || (vsp[i].ctag <= 0)) continue;
++		if (nx0 >= x1) break;	// the list is sorted by x
++		if ((x0 >= nx1) || (vsp[i].ctag <= 0)) continue;
+ 		dx = nx1-nx0;
+ 		cy[0] = vsp[i].cy[0]; cv[0] = vsp[i].cy[1]-cy[0];
+ 		cy[1] = vsp[i].fy[0]; cv[1] = vsp[i].fy[1]-cy[1];
+@@ -1959,9 +2155,12 @@ static void domost (float x0, float y0, float x1, float y1, int polymethod)
+ 
+ 		//Combine neighboring vertical strips with matching collinear top&bottom edges
+ 		//This prevents x-splits from propagating through the entire scan
++		//Only the strips this call touched and the one before can have changed
+ 	i = vsp[0].n;
++	while (vsp[i].n && (vsp[vsp[i].n].x < x0)) i = vsp[i].n;
+ 	while (i)
+ 	{
++		if (vsp[i].x > x1) break;
+ 		ni = vsp[i].n;
+ 		if ((vsp[i].cy[0] >= vsp[i].fy[0]) && (vsp[i].cy[1] >= vsp[i].fy[1])) { vsp[i].ctag = vsp[i].ftag = -1; }
+ 		if ((vsp[i].ctag == vsp[ni].ctag) && (vsp[i].ftag == vsp[ni].ftag))
+@@ -1976,10 +2175,11 @@ static void polymost_drawalls (int bunch)
+ {
+ 	sectortype *sec, *nextsec;
+ 	walltype *wal, *wal2, *nwal;
+-	double ox, oy, oz, ox2, oy2, px[3], py[3], dd[3], uu[3], vv[3];
++	double ox, oy, oz, ox2, oy2, px[3], py[3];
++	double dd[3], uu[3], vv[3];
+ 	double fx, fy, x0, x1, cy0, cy1, fy0, fy1, xp0, yp0, xp1, yp1, ryp0, ryp1, nx0, ny0, nx1, ny1;
+ 	double t, r, t0, t1, ocy0, ocy1, ofy0, ofy1, oxp0, oyp0, ft[4];
+-	double oguo, ogux, oguy;
++	double oguo, ogux, oguy, skyx0, skyx1;
+ 	int i, x, y, z, cz, fz, wallnum, sectnum, nextsectnum, domostmethod;
+ 
+ #ifdef DEBUGGINGAIDS
+@@ -2026,12 +2226,46 @@ static void polymost_drawalls (int bunch)
+ 		}
+ 		else { t1 = 1.f; nx1 = wal2->x; ny1 = wal2->y; }
+ 
++#ifdef __PS2__
++			//Clip to the view's sides too, as to the close plane above: the planes
++			//of the wall are then made from points on the screen. From points far
++			//off it (a wall cut by the close plane) float loses them
++		{
++			float fl = gvsx0-2.f-ghalfx, fr = gvsx1+2.f-ghalfx, f0, f1, s;
++
++			f0 = ghalfx*xp0 - fl*yp0; f1 = ghalfx*xp1 - fl*yp1;
++			if ((f0 < 0.f) && (f1 > 0.f))
++			{
++				s = f0/(f0-f1);
++				xp0 += (xp1-xp0)*s; yp0 += (yp1-yp0)*s;
++				nx0 += (nx1-nx0)*s; ny0 += (ny1-ny0)*s;
++				t0 += (t1-t0)*s;
++			}
++			f0 = fr*yp0 - ghalfx*xp0; f1 = fr*yp1 - ghalfx*xp1;
++			if ((f1 < 0.f) && (f0 > 0.f))
++			{
++				s = f0/(f0-f1);
++				xp1 = xp0 + (xp1-xp0)*s; yp1 = yp0 + (yp1-yp0)*s;
++				nx1 = nx0 + (nx1-nx0)*s; ny1 = ny0 + (ny1-ny0)*s;
++				t1 = t0 + (t1-t0)*s;
++			}
++		}
++#endif
++
+ 		ryp0 = 1.f/yp0; ryp1 = 1.f/yp1;
+ 
+ 			//Generate screen coordinates for front side of wall
+ 		x0 = ghalfx*xp0*ryp0 + ghalfx;
+ 		x1 = ghalfx*xp1*ryp1 + ghalfx;
+ 		if (x1 <= x0) continue;
++#ifdef __PS2__
++		// outside the view (the vsp list's span) it can neither draw nor show
++		// a sector: on a big map most of a bunch's walls are
++		if ((x1 <= gvsx0) || (x0 >= gvsx1)) continue;
++		// behind what is drawn already: none of the planes below is needed, and
++		// the sector behind it would not be scanned
++		if (!testvisiblemost(x0,x1)) continue;
++#endif
+ 
+ 		ryp0 *= gyxscale; ryp1 *= gyxscale;
+ 
+@@ -2150,6 +2384,9 @@ static void polymost_drawalls (int bunch)
+ 		}
+ 		else if ((nextsectnum < 0) || (!(sector[nextsectnum].floorstat&1)))
+ 		{
++#ifdef __PS2__
++			ps2_skydepth(1);
++#endif
+ 				//Parallaxing sky... hacked for Ken's mountain texture; paper-sky only :/
+ #if USE_OPENGL
+ 			float tempfogdensity = gfogdensity;
+@@ -2199,15 +2436,22 @@ static void polymost_drawalls (int bunch)
+ 				i = globalpicnum; r = (fy1-fy0)/(x1-x0); //slope of line
+ 				oy = ((double)viewingrange)/(ghalfx*256.0); oz = 1/oy;
+ 
+-				y = ((((int)((x0-ghalfx)*oy))+globalang)>>(11-pskybits));
+-				fx = x0;
++#ifdef __PS2__
++				// only the strips in view: a near wall's x0 and x1 can be thousands
++				// of screens away. The edges below are measured from x0 either way
++				skyx0 = x0 > gvsx0 ? x0 : gvsx0; skyx1 = x1 < gvsx1 ? x1 : gvsx1;
++#else
++				skyx0 = x0; skyx1 = x1;
++#endif
++				y = ((((int)((skyx0-ghalfx)*oy))+globalang)>>(11-pskybits));
++				fx = skyx0;
+ 				do
+ 				{
+ 					globalpicnum = pskyoff[y&((1<<pskybits)-1)]+i;
+ 					guo = gdo*(t*((double)(globalang-(y<<(11-pskybits))))/2048.0 + (double)sec->floorxpanning) - gux*ghalfx;
+ 					y++;
+ 					ox = fx; fx = ((double)((y<<(11-pskybits))-globalang))*oz+ghalfx;
+-					if (fx > x1) { fx = x1; i = -1; }
++					if (fx > skyx1) { fx = skyx1; i = -1; }
+ 
+ 					domost(ox,(ox-x0)*r+fy0,fx,(fx-x0)*r+fy0,domostmethod); //flor
+ 				} while (i >= 0);
+@@ -2378,6 +2622,9 @@ static void polymost_drawalls (int bunch)
+ 			{
+ 				gfogdensity = tempfogdensity;
+ 			}
++#endif
++#ifdef __PS2__
++			ps2_skydepth(0);
+ #endif
+ 		}
+ 
+@@ -2487,6 +2734,9 @@ static void polymost_drawalls (int bunch)
+ 		}
+ 		else if ((nextsectnum < 0) || (!(sector[nextsectnum].ceilingstat&1)))
+ 		{
++#ifdef __PS2__
++			ps2_skydepth(1);
++#endif
+ #if USE_OPENGL
+ 			float tempfogdensity = gfogdensity;
+ 			if (rendmode == 3)
+@@ -2536,15 +2786,22 @@ static void polymost_drawalls (int bunch)
+ 				i = globalpicnum; r = (cy1-cy0)/(x1-x0); //slope of line
+ 				oy = ((double)viewingrange)/(ghalfx*256.0); oz = 1/oy;
+ 
+-				y = ((((int)((x0-ghalfx)*oy))+globalang)>>(11-pskybits));
+-				fx = x0;
++#ifdef __PS2__
++				// only the strips in view: a near wall's x0 and x1 can be thousands
++				// of screens away. The edges below are measured from x0 either way
++				skyx0 = x0 > gvsx0 ? x0 : gvsx0; skyx1 = x1 < gvsx1 ? x1 : gvsx1;
++#else
++				skyx0 = x0; skyx1 = x1;
++#endif
++				y = ((((int)((skyx0-ghalfx)*oy))+globalang)>>(11-pskybits));
++				fx = skyx0;
+ 				do
+ 				{
+ 					globalpicnum = pskyoff[y&((1<<pskybits)-1)]+i;
+ 					guo = gdo*(t*((double)(globalang-(y<<(11-pskybits))))/2048.0 + (double)sec->ceilingxpanning) - gux*ghalfx;
+ 					y++;
+ 					ox = fx; fx = ((double)((y<<(11-pskybits))-globalang))*oz+ghalfx;
+-					if (fx > x1) { fx = x1; i = -1; }
++					if (fx > skyx1) { fx = skyx1; i = -1; }
+ 					domost(fx,(fx-x0)*r+cy0,ox,(ox-x0)*r+cy0,domostmethod); //ceil
+ 				} while (i >= 0);
+ 			}
+@@ -2713,6 +2970,9 @@ static void polymost_drawalls (int bunch)
+ 			{
+ 				gfogdensity = tempfogdensity;
+ 			}
++#endif
++#ifdef __PS2__
++			ps2_skydepth(0);
+ #endif
+ 		}
+ 
+@@ -2886,7 +3146,11 @@ static int polymost_bunchfront (int b1, int b2)
+ 
+ static void polymost_scansector (int sectnum)
+ {
++#ifdef __PS2__
++	long long xi1 = 0, yi1 = 0, xi2 = 0, yi2 = 0;
++#else
+ 	double d, xp1, yp1, xp2, yp2;
++#endif
+ 	walltype *wal, *wal2;
+ 	spritetype *spr;
+ 	int z, zz, startwall, endwall, numscansbefore, scanfirst, bunchfrst, nextsectnum;
+@@ -2923,13 +3187,51 @@ static void polymost_scansector (int sectnum)
+ 
+ 		startwall = sector[sectnum].wallptr; endwall = sector[sectnum].wallnum+startwall;
+ 		scanfirst = numscans;
++#ifndef __PS2__
+ 		xp2 = 0; yp2 = 0;
++#endif
+ 		for(z=startwall,wal=&wall[z];z<endwall;z++,wal++)
+ 		{
+ 			wal2 = &wall[wal->point2];
+ 			x1 = wal->x-globalposx; y1 = wal->y-globalposy;
+ 			x2 = wal2->x-globalposx; y2 = wal2->y-globalposy;
+ 
++#ifdef __PS2__
++			// All integers: exact in 64 bits, where float loses these differences
++			// of large products to cancellation and double is soft float. xi and
++			// yi are xp and yp times 64
++			nextsectnum = wal->nextsector; //Scan close sectors
++			if ((nextsectnum >= 0) && (!(wal->cstat&32)) && (!(gotsector[nextsectnum>>3]&pow2char[nextsectnum&7])))
++			{
++				float fd = (float)((long long)x1*y2 - (long long)x2*y1);
++				float fx = (float)(x2-x1), fy = (float)(y2-y1);
++				if (fd*fd <= (fx*fx + fy*fy)*(SCISDIST*SCISDIST*260.0f))
++					sectorborder[sectorbordercnt++] = nextsectnum;
++			}
++
++			if ((z == startwall) || (wall[z-1].point2 != z))
++			{
++				xi1 = (long long)y1*cosglobalang - (long long)x1*singlobalang;
++				yi1 = (long long)x1*cosviewingrangeglobalang + (long long)y1*sinviewingrangeglobalang;
++			}
++			else { xi1 = xi2; yi1 = yi2; }
++			xi2 = (long long)y2*cosglobalang - (long long)x2*singlobalang;
++			yi2 = (long long)x2*cosviewingrangeglobalang + (long long)y2*sinviewingrangeglobalang;
++			if ((yi1 >= 64) || (yi2 >= 64))
++				if ((xi1>>4)*(yi2>>4) < (xi2>>4)*(yi1>>4)) //if wall is facing you...
++				{
++					if (yi1 >= 64)
++						  dxb1[numscans] = (float)xi1*ghalfx/(float)yi1 + ghalfx;
++					else dxb1[numscans] = -1e32;
++
++					if (yi2 >= 64)
++						  dxb2[numscans] = (float)xi2*ghalfx/(float)yi2 + ghalfx;
++					else dxb2[numscans] = 1e32;
++
++					if (dxb1[numscans] < dxb2[numscans])
++						{ thesector[numscans] = sectnum; thewall[numscans] = z; p2[numscans] = numscans+1; numscans++; }
++				}
++#else
+ 			nextsectnum = wal->nextsector; //Scan close sectors
+ 			if ((nextsectnum >= 0) && (!(wal->cstat&32)) && (!(gotsector[nextsectnum>>3]&pow2char[nextsectnum&7])))
+ 			{
+@@ -2961,6 +3263,8 @@ static void polymost_scansector (int sectnum)
+ 						{ thesector[numscans] = sectnum; thewall[numscans] = z; p2[numscans] = numscans+1; numscans++; }
+ 				}
+ 
++#endif
++
+ 			if ((wall[z].point2 < z) && (scanfirst < numscans))
+ 				{ p2[numscans-1] = scanfirst; scanfirst = numscans; }
+ 		}
+@@ -3095,6 +3399,13 @@ void polymost_drawrooms (void)
+ 		sy[i] = py2[i]*r + ghoriz;
+ 	}
+ 	initmosts(sx,sy,n2);
++#ifdef __PS2__
++	gvsx0 = 1e30f; gvsx1 = -1e30f;
++	for (i = vsp[0].n; i; i = vsp[i].n) {
++		if (vsp[i].x < gvsx0) gvsx0 = vsp[i].x;
++		if (vsp[i].x > gvsx1) gvsx1 = vsp[i].x;
++	}
++#endif
+ 
+ 	if (searchit == 2)
+ 	{
+diff --git a/src/polymost_priv.h b/src/polymost_priv.h
+index 217e8b3..ade66c6 100644
+--- a/src/polymost_priv.h
++++ b/src/polymost_priv.h
+@@ -6,7 +6,11 @@
+ 
+ extern int rendmode;
+ extern float gtang;
++#ifdef __PS2__
++extern float dxb1[MAXWALLSB], dxb2[MAXWALLSB];  // polymost.c is float there, engine.c not
++#else
+ extern double dxb1[MAXWALLSB], dxb2[MAXWALLSB];
++#endif
+ 
+ #ifdef DEBUGGINGAIDS
+ struct polymostcallcounts {
+diff --git a/src/polymosttex.c b/src/polymosttex.c
+index 2857cd3..ded7278 100644
+--- a/src/polymosttex.c
++++ b/src/polymosttex.c
+@@ -141,7 +141,7 @@ void PTM_InitIdent(PTMIdent *id, PTHead *pth)
+ 			// hightile + skybox + picnum ought to cover it
+ 		    id->picnum = pth->picnum;
+ 		} else {
+-		    strncpy(id->filename, pth->repldef->filename, BMAX_PATH);
++		    strncpy(id->filename, pth->repldef->filename, sizeof id->filename);
+ 		}
+ 	} else {
+ 		id->type = PTMIDENT_ART;
+@@ -185,6 +185,15 @@ PTMHead * PTM_GetHead(const PTMIdent *id)
+ 		ptmh->next = ptmhashhead[i];
+ 		ptmhashhead[i] = ptmh;
+ 	}
++#ifdef __PS2__
++	// here: the compiler took the &ptmh->head below for "not null", and left
++	// the test above out
++	else {
++		extern void ps2_oom(unsigned bytes);
++		ps2_oom(sizeof(PTMHash));
++		return 0;
++	}
++#endif
+ 
+ 	return &ptmh->head;
+ }
+@@ -612,6 +621,149 @@ static int pt_load(PTHash * pth)
+  * @param pth the header to populate
+  * @return !0 on success
+  */
++#ifdef __PS2__
++// the EE's cycles spent on textures this frame (ps2_layer.c clears it), and the
++// most after which another may be started: 1 ms
++unsigned ps2_tex_time;
++int ps2_tex_failed;	// tiles left out: no memory
++unsigned ps2_count(void);
++int ps2_tex_late(void);
++#define PS2_TEX_BUDGET 294912
++
++// libgl keeps a texture of the shared palette's colours as its indices, a byte
++// a texel: the colours pt_load_art makes, and 255 the transparent one
++static void ps2_sharedpalette(void)
++{
++	static unsigned char pal[256][4], last[256][4];
++	static int done;
++	int i;
++	for (i = 0; i < 256; i++) {
++		if (usegammabrightness) {
++			pal[i][0] = curpalette[i].r; pal[i][1] = curpalette[i].g; pal[i][2] = curpalette[i].b;
++		} else {
++			pal[i][0] = britable[curbrightness][curpalette[i].r];
++			pal[i][1] = britable[curbrightness][curpalette[i].g];
++			pal[i][2] = britable[curbrightness][curpalette[i].b];
++		}
++		pal[i][3] = i == 255 ? 0 : 255;
++	}
++	if (done && !memcmp(pal, last, sizeof pal)) return;
++	done = 1;
++	memcpy(last, pal, sizeof pal);
++	glColorTableEXT(GL_SHARED_TEXTURE_PALETTE_EXT, GL_RGBA, 256, GL_RGBA, GL_UNSIGNED_BYTE, pal);
++}
++#endif
++
++#ifdef __PS2__
++// A layer of an ART texture as bytes of the shared palette, straight to libgl.
++// More than gltexmaxsize a side: every n-th texel.
++static void ps2_uploadindex(PTMHead * ptm, unsigned char * pic, int sizx, int sizy, int hasalpha)
++{
++	int step = 1, x, y;
++
++	detect_texture_size();
++	while ((sizx / step) > (1 << gltexmaxsize) || (sizy / step) > (1 << gltexmaxsize)) step <<= 1;
++	if (ptm->glpic == 0) glfunc.glGenTextures(1, &ptm->glpic);
++	glfunc.glBindTexture(GL_TEXTURE_2D, ptm->glpic);
++	if (step > 1) {
++		unsigned char * o = pic;
++		for (y = 0; y < sizy; y += step)
++			for (x = 0; x < sizx; x += step)
++				*o++ = pic[y*sizx + x];
++		sizx /= step; sizy /= step;
++	}
++	glfunc.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, sizx, sizy, 0, GL_COLOR_INDEX, GL_UNSIGNED_BYTE, pic);
++	ptm->flags = hasalpha ? PTH_HASALPHA : 0;
++}
++
++static int ps2_load_art(PTHead * pth)
++{
++	int tsizx = tilesizx[pth->picnum], tsizy = tilesizy[pth->picnum];
++	int sizx, sizy, x, y, x2, y2, hasalpha = 0, hasfullbright = 0;
++	unsigned char *pic, *fb, *col, *pal;
++	PTMIdent id;
++
++	for (sizx = 1; sizx < tsizx; sizx += sizx) ;
++	for (sizy = 1; sizy < tsizy; sizy += sizy) ;
++	if (sizx < 8 || sizy < 8) return -1;	// the general way
++	if (!waloff[pth->picnum]) loadtile(pth->picnum);
++	if (!waloff[pth->picnum]) return -1;
++	ps2_sharedpalette();
++
++	pic = (unsigned char *) malloc(sizx * sizy * 2);
++	if (!pic) return 0;
++	fb = pic + sizx * sizy;
++	memset(fb, 255, sizx * sizy);
++	pal = (unsigned char *) palookup[pth->palnum];
++
++	// ART tiles are stored by columns. What is past the tile's size repeats it,
++	// or for a clamped texture is transparent
++	{
++		int clamped = (pth->flags & PTH_CLAMPED) != 0;
++		int ex = clamped ? tsizx : sizx, ey = clamped ? tsizy : sizy;
++		if (clamped && ((ex < sizx) || (ey < sizy))) {
++			memset(pic, 255, sizx * sizy);
++			hasalpha = 1;
++		}
++		for (x = 0; x < ex; x++) {
++			unsigned char * o = pic + x, * f = fb + x;
++			x2 = x < tsizx ? x : x - tsizx;
++			col = (unsigned char *) waloff[pth->picnum] + x2 * tsizy;
++			for (y = 0, y2 = 0; y < ey; y++, o += sizx, f += sizx) {
++				int dacol = col[y2];
++				if (++y2 == tsizy) y2 = 0;
++				if (dacol == 255) {
++					hasalpha = 1;
++				} else {
++					dacol = pal[dacol];
++					if ((dacol >= polymosttexfullbright) && (dacol < 255)) {
++						*f = dacol;
++						hasfullbright = 1;
++					}
++				}
++				*o = dacol;
++			}
++		}
++	}
++
++	pth->scalex = 1.0;
++	pth->scaley = 1.0;
++	pth->flags &= ~(PTH_HASALPHA | PTH_SKYBOX);
++	pth->flags |= (PTH_NOCOMPRESS | PTH_NOMIPLEVEL);
++
++	PTM_InitIdent(&id, pth);
++	id.layer = PTHPIC_BASE;
++	pth->pic[PTHPIC_BASE] = PTM_GetHead(&id);
++	if (!pth->pic[PTHPIC_BASE]) {	// out of memory: the tile goes without
++		ps2_tex_failed++;
++		free(pic);
++		return 0;
++	}
++	pth->pic[PTHPIC_BASE]->tsizx = tsizx;
++	pth->pic[PTHPIC_BASE]->tsizy = tsizy;
++	pth->pic[PTHPIC_BASE]->sizx = sizx;
++	pth->pic[PTHPIC_BASE]->sizy = sizy;
++	ps2_uploadindex(pth->pic[PTHPIC_BASE], pic, sizx, sizy, hasalpha);
++	if (hasalpha) pth->flags |= PTH_HASALPHA;
++
++	pth->pic[PTHPIC_GLOW] = 0;
++	if (hasfullbright) {
++		id.layer = PTHPIC_GLOW;
++		pth->pic[PTHPIC_GLOW] = PTM_GetHead(&id);
++	}
++	if (pth->pic[PTHPIC_GLOW]) {
++		pth->pic[PTHPIC_GLOW]->tsizx = tsizx;
++		pth->pic[PTHPIC_GLOW]->tsizy = tsizy;
++		pth->pic[PTHPIC_GLOW]->sizx = sizx;
++		pth->pic[PTHPIC_GLOW]->sizy = sizy;
++		ps2_uploadindex(pth->pic[PTHPIC_GLOW], fb, sizx, sizy, 1);
++	}
++	pt_load_applyparameters(pth);
++	free(pic);
++	return 1;
++}
++#endif
++
+ static int pt_load_art(PTHead * pth)
+ {
+ 	PTTexture tex, fbtex;
+@@ -621,6 +773,14 @@ static int pt_load_art(PTHead * pth)
+ 	int hasalpha = 0, hasfullbright = 0;
+     PTMIdent id;
+ 
++#ifdef __PS2__
++	{
++		int r = ps2_load_art(pth);
++		if (r >= 0) return r;
++	}
++	ps2_sharedpalette();
++#endif
++
+ 	tex.tsizx = tilesizx[pth->picnum];
+ 	tex.tsizy = tilesizy[pth->picnum];
+ 	if (!glinfo.texnpot) {
+@@ -718,6 +878,14 @@ static int pt_load_art(PTHead * pth)
+     PTM_InitIdent(&id, pth);
+     id.layer = PTHPIC_BASE;
+ 	pth->pic[PTHPIC_BASE] = PTM_GetHead(&id);
++#ifdef __PS2__
++	if (!pth->pic[PTHPIC_BASE]) {	// out of memory: the tile goes without
++		ps2_tex_failed++;
++		free(tex.pic);
++		if (fbtex.pic) free(fbtex.pic);
++		return 0;
++	}
++#endif
+ 	pth->pic[PTHPIC_BASE]->tsizx = tex.tsizx;
+ 	pth->pic[PTHPIC_BASE]->tsizy = tex.tsizy;
+ 	pth->pic[PTHPIC_BASE]->sizx  = tex.sizx;
+@@ -727,12 +895,17 @@ static int pt_load_art(PTHead * pth)
+ 	if (hasfullbright) {
+         id.layer = PTHPIC_GLOW;
+ 		pth->pic[PTHPIC_GLOW] = PTM_GetHead(&id);
++#ifdef __PS2__
++		if (pth->pic[PTHPIC_GLOW])
++#endif
++		{
+ 		pth->pic[PTHPIC_GLOW]->tsizx = tex.tsizx;
+ 		pth->pic[PTHPIC_GLOW]->tsizy = tex.tsizy;
+ 		pth->pic[PTHPIC_GLOW]->sizx  = tex.sizx;
+ 		pth->pic[PTHPIC_GLOW]->sizy  = tex.sizy;
+ 		fbtex.hasalpha = 1;
+ 		ptm_uploadtexture(pth->pic[PTHPIC_GLOW], pth->flags, &fbtex, 0);
++		}
+ 	} else {
+ 		// it might be that after reloading an invalidated texture, the
+ 		// glow map might not be needed anymore, so release it
+@@ -1238,6 +1411,9 @@ static void ptm_uploadtexture(PTMHead * ptm, unsigned short flags, PTTexture * t
+ 			GL_UNSIGNED_BYTE, (const GLvoid *) tex->pic);
+ 	}
+ 
++#ifdef __PS2__
++	tex->sizx = tex->sizy = 1;	// libgl makes the levels itself
++#endif
+ 	for (mipmap = 1; tex->sizx > 1 || tex->sizy > 1; mipmap++) {
+ 		ptm_mipscale(tex);
+ 		ptm_fixtransparency(tex, (flags & PTH_CLAMPED));
+@@ -1439,6 +1615,21 @@ PTHead * PT_GetHead(int picnum, int palnum, unsigned short flags, int peek)
+ 		return 0;
+ 	}
+ 
++#ifdef __PS2__
++	// A texture first used while playing is made in the frame that draws it:
++	// a large one takes as long as the frame. A frame that has spent its time,
++	// or is well into its field already, leaves the rest to the next frames;
++	// such a tile shows a frame or a few later
++	if (!(pth->head.pic[PTHPIC_BASE] && pth->head.pic[PTHPIC_BASE]->glpic != 0 &&
++			(pth->head.pic[PTHPIC_BASE]->flags & PTH_DIRTY) == 0)) {
++		unsigned t0;
++		if ((ps2_tex_time > PS2_TEX_BUDGET) || ps2_tex_late()) return 0;
++		t0 = ps2_count();
++		if (!pt_load(pth)) return 0;
++		ps2_tex_time += ps2_count() - t0;
++	}
++	else
++#endif
+ 	if (!pt_load(pth)) {
+ 		return 0;
+ 	}
+diff --git a/src/polymosttex_priv.h b/src/polymosttex_priv.h
+index e211a76..8a87587 100644
+--- a/src/polymosttex_priv.h
++++ b/src/polymosttex_priv.h
+@@ -46,7 +46,11 @@ struct PTMIdent_typ {
+     int picnum;
+     int layer;      //see PTHPIC_* constants
+ 	int effects;    //see HICEFFECT_* constants
++#ifdef __PS2__
++	char filename[4];	// hightile's: not here, and a level has thousands of these
++#else
+ 	char filename[BMAX_PATH];
++#endif
+ };
+ 
+ typedef struct PTMIdent_typ PTMIdent;

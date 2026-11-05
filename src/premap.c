@@ -50,7 +50,11 @@ static void tloadtile(short tilenume, char type)
         }
         for (;i<=j;i++) {
 #if USE_POLYMOST && USE_OPENGL
+#ifdef __PS2__
+            if (useprecache) polymost_precache(i, 0, type); // each frame of the animation
+#else
             if (useprecache) polymost_precache(tilenume, 0, type);
+#endif
 #endif
             gotpic[i>>3] |= pow2char[i&7];
         }
@@ -282,12 +286,19 @@ void precachenecessarysounds(void)
         }
 }
 
+#ifdef __PS2__
+#include "ps2_port.h"
+#endif
+
 void cacheit(void)
 {
     int i,j;
     unsigned int starttime, endtime;
 
     starttime = getticks();
+#ifdef __PS2__
+    ps2_level_loading();
+#endif
 #if USE_POLYMOST && USE_OPENGL
     polymost_precache_begin();
 #endif
@@ -299,6 +310,9 @@ void cacheit(void)
     for(i=0;i<numwalls;i++)
     {
         tloadtile(wall[i].picnum, 0);
+#ifdef __PS2__
+        if (useprecache && wall[i].pal) polymost_precache(wall[i].picnum, wall[i].pal, 0);
+#endif
 
         if(wall[i].overpicnum >= 0) {
             tloadtile(wall[i].overpicnum, 0);
@@ -309,6 +323,25 @@ void cacheit(void)
     {
         tloadtile( sector[i].floorpicnum, 0 );
         tloadtile( sector[i].ceilingpicnum, 0 );
+#ifdef __PS2__
+        // A texture made in play costs up to a frame: also what the level asks
+        // for in other palettes, and the strips of a parallaxed sky
+        if (useprecache) {
+            int k, pic;
+            if (sector[i].floorpal) polymost_precache(sector[i].floorpicnum, sector[i].floorpal, 0);
+            if (sector[i].ceilingpal) polymost_precache(sector[i].ceilingpicnum, sector[i].ceilingpal, 0);
+            for (k = 0; k < 2; k++) {
+                int stat = k ? sector[i].floorstat : sector[i].ceilingstat;
+                int pal = k ? sector[i].floorpal : sector[i].ceilingpal;
+                if (!(stat & 1)) continue;
+                pic = k ? sector[i].floorpicnum : sector[i].ceilingpicnum;
+                for (j = 0; j < (1<<pskybits); j++) {
+                    tloadtile(pic + pskyoff[j], 1); // the sky is clamped
+                    if (pal) polymost_precache(pic + pskyoff[j], pal, 1);
+                }
+            }
+        }
+#endif
         if( sector[i].ceilingpicnum == LA)
         {
             tloadtile(LA+1, 0);
@@ -378,6 +411,9 @@ void cacheit(void)
 
     endtime = getticks();
     buildprintf("Cache time: %dms\n", endtime-starttime);
+#ifdef __PS2__
+    ps2_level_loaded();
+#endif
 }
 
 

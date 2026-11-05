@@ -100,7 +100,11 @@ enum {
 #define TICRATE (120)
 #define TICSPERFRAME (TICRATE/26)
 
+#ifdef __PS2__
+#define MAXCACHE1DSIZE (6*1048576) // libgl keeps the textures in the rest of the 32 MiB
+#else
 #define MAXCACHE1DSIZE (16*1048576)
+#endif
 
 // #define GC (TICSPERFRAME*44)
 

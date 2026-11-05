@@ -8957,6 +8957,10 @@ char domovethings(void)
     short i, j;
     unsigned char ch;
 
+#ifdef __PS2__
+    { extern int ps2_god; if (ps2_god) ud.god = 1; } // the test script's player
+#endif
+
     for(i=connecthead;i>=0;i=connectpoint2[i])
         if( sync[i].bits&(1<<17) )
     {

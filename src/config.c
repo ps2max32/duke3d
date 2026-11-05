@@ -76,11 +76,22 @@ int32 JoystickAnalogueSaturate[MAXJOYAXES];
 // Screen variables
 //
 
+#ifdef __PS2__
+#include "ps2_port.h"
+#endif
 int32 ScreenMode = 1;
 int32 ScreenDisplay = 0;
 int32 ScreenWidth = 640;
+#ifdef __PS2__
+int32 ScreenHeight = 448;
+#else
 int32 ScreenHeight = 480;
+#endif
+#ifdef __PS2__
+int32 ScreenBPP = 32; // Polymost on libgl
+#else
 int32 ScreenBPP = 8;
+#endif
 int32 ForceSetup = 1;
 
 static char setupfilename[256]={SETUPFILENAME};
@@ -611,6 +622,16 @@ int32 CONFIG_ReadSetup( void )
     SCRIPT_GetNumber( scripthandle, "Screen Setup", "Out",&ud.lockout);
     SCRIPT_GetNumber( scripthandle, "Screen Setup", "ScreenBPP", &ScreenBPP);
     if (ScreenBPP < 8) ScreenBPP = 8;
+#ifdef __PS2__
+    ScreenWidth = 640; ScreenHeight = 448; ScreenBPP = 32; ScreenMode = 1;
+    // the resolution is not kept: a TV without 1080i would show nothing
+    SCRIPT_GetNumber( scripthandle, "Screen Setup", "PS2BeamRacing", &ps2_vid_beam);
+    SCRIPT_GetNumber( scripthandle, "Screen Setup", "PS2Colour24", &ps2_vid_rgb24);
+    SCRIPT_GetNumber( scripthandle, "Screen Setup", "PS2TexQuality", &ps2_tex_quality);
+    SCRIPT_GetNumber( scripthandle, "Screen Setup", "PS2TexVramHigh", &ps2_tex_limits[0]);
+    SCRIPT_GetNumber( scripthandle, "Screen Setup", "PS2TexVramLow", &ps2_tex_limits[1]);
+    SCRIPT_GetNumber( scripthandle, "Screen Setup", "PS2TexSwapIns", &ps2_tex_limits[2]);
+#endif
 
     int32 tmpmaxrefreshfreq = 0;
     SCRIPT_GetNumber( scripthandle, "Screen Setup", "MaxRefreshFreq", &tmpmaxrefreshfreq);
@@ -710,6 +731,14 @@ void CONFIG_WriteSetup( void )
     SCRIPT_PutNumber( scripthandle, "Screen Setup", "ScreenMode",ScreenMode,false,false);
     SCRIPT_PutNumber( scripthandle, "Screen Setup", "ScreenDisplay",ScreenDisplay,false,false);
     SCRIPT_PutNumber( scripthandle, "Screen Setup", "ScreenBPP",ScreenBPP,false,false);
+#ifdef __PS2__
+    SCRIPT_PutNumber( scripthandle, "Screen Setup", "PS2BeamRacing",ps2_vid_beam,false,false);
+    SCRIPT_PutNumber( scripthandle, "Screen Setup", "PS2Colour24",ps2_vid_rgb24,false,false);
+    SCRIPT_PutNumber( scripthandle, "Screen Setup", "PS2TexQuality",ps2_tex_quality,false,false);
+    SCRIPT_PutNumber( scripthandle, "Screen Setup", "PS2TexVramHigh",ps2_tex_limits[0],false,false);
+    SCRIPT_PutNumber( scripthandle, "Screen Setup", "PS2TexVramLow",ps2_tex_limits[1],false,false);
+    SCRIPT_PutNumber( scripthandle, "Screen Setup", "PS2TexSwapIns",ps2_tex_limits[2],false,false);
+#endif
     SCRIPT_PutNumber( scripthandle, "Screen Setup", "MaxRefreshFreq",max(0,(int)getmaxrefreshfreq()),false,false);
 #if USE_POLYMOST && USE_OPENGL
     SCRIPT_PutNumber( scripthandle, "Screen Setup", "GLTextureMode",gltexfiltermode,false,false);

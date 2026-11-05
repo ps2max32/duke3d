@@ -1,0 +1,138 @@
+diff --git a/src/drivers.c b/src/drivers.c
+index 9b7db31..769a514 100644
+--- a/src/drivers.c
++++ b/src/drivers.c
+@@ -31,6 +31,10 @@
+ 
+ #include "driver_nosound.h"
+ 
++#ifdef HAVE_PS2
++# include "driver_ps2.h"
++#endif
++
+ #ifdef HAVE_SDL
+ # include "driver_sdl.h"
+ #endif
+@@ -97,12 +101,36 @@ static struct {
+         "No Sound",
+         NoSoundDrv_GetError,
+         NoSoundDrv_ErrorString,
++#ifdef HAVE_PS2
++        PS2Drv_PCM_Init,
++#else
+         NoSoundDrv_PCM_Init,
++#endif
++#ifdef HAVE_PS2
++        PS2Drv_PCM_Shutdown,
++#else
+         NoSoundDrv_PCM_Shutdown,
++#endif
++#ifdef HAVE_PS2
++        PS2Drv_PCM_BeginPlayback,
++#else
+         NoSoundDrv_PCM_BeginPlayback,
++#endif
++#ifdef HAVE_PS2
++        PS2Drv_PCM_StopPlayback,
++#else
+         NoSoundDrv_PCM_StopPlayback,
++#endif
++#ifdef HAVE_PS2
++        PS2Drv_PCM_Lock,
++#else
+         NoSoundDrv_PCM_Lock,
++#endif
++#ifdef HAVE_PS2
++        PS2Drv_PCM_Unlock,
++#else
+         NoSoundDrv_PCM_Unlock,
++#endif
+         NoSoundDrv_CD_Init,
+         NoSoundDrv_CD_Shutdown,
+         NoSoundDrv_CD_Play,
+diff --git a/src/midi.c b/src/midi.c
+index 377fd36..ce32c08 100644
+--- a/src/midi.c
++++ b/src/midi.c
+@@ -1312,7 +1312,7 @@ int MIDI_PlaySong
+       return( MIDI_NullMidiModule );
+       }
+ 
+-   if ( *( unsigned int * )song != LITTLE32(MIDI_HEADER_SIGNATURE) )
++   if ( memcmp( song, "MThd", 4 ) != 0 ) // tracks may be unaligned
+       {
+       return( MIDI_InvalidMidiFile );
+       }
+@@ -1353,7 +1353,7 @@ int MIDI_PlaySong
+    numtracks    = _MIDI_NumTracks;
+    while( numtracks-- )
+       {
+-      if ( *( unsigned int * )ptr != LITTLE32(MIDI_TRACK_SIGNATURE) )
++      if ( memcmp( ptr, "MTrk", 4 ) != 0 )
+          {
+          free( _MIDI_TrackPtr );
+ 
+diff --git a/src/multivoc.c b/src/multivoc.c
+index 395347d..204a324 100644
+--- a/src/multivoc.c
++++ b/src/multivoc.c
+@@ -42,6 +42,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ #include "assmisc.h"
+ #include "_multivc.h"
+ 
++/* the blocks of a VOC file are not aligned */
++static unsigned short read16( const void *p ) { unsigned short v; memcpy( &v, p, 2 ); return v; }
++static unsigned int read32( const void *p ) { unsigned int v; memcpy( &v, p, 4 ); return v; }
++
+ #define RoundFixed( fixedval, bits )            \
+         (                                       \
+           (                                     \
+@@ -559,7 +563,7 @@ static playbackstatus MV_GetNextVOCBlock
+          }
+ 
+       blocktype = ( int )*ptr;
+-      blocklength = LITTLE32( *( unsigned int * )( ptr + 1 ) ) & 0x00ffffff;
++      blocklength = LITTLE32( read32( ptr + 1 ) ) & 0x00ffffff;
+       ptr += 4;
+ 
+       switch( blocktype )
+@@ -639,7 +643,7 @@ static playbackstatus MV_GetNextVOCBlock
+             // Repeat begin
+             if ( voice->LoopEnd == NULL )
+                {
+-               voice->LoopCount = LITTLE16(*( unsigned short * )ptr);
++               voice->LoopCount = LITTLE16( read16( ptr ) );
+                voice->LoopStart = (char *)ptr + blocklength;
+                }
+             ptr += blocklength;
+@@ -673,7 +677,7 @@ static playbackstatus MV_GetNextVOCBlock
+             // Extended block
+             voice->bits  = 8;
+             voice->channels = 1;
+-            tc = LITTLE16( *( unsigned short * )ptr );
++            tc = LITTLE16( read16( ptr ) );
+             packtype = *( ptr + 2 );
+             voicemode = *( ptr + 3 );
+             ptr += blocklength;
+@@ -681,10 +685,10 @@ static playbackstatus MV_GetNextVOCBlock
+ 
+          case 9 :
+             // New sound data block
+-            samplespeed = LITTLE32( *( unsigned int * )ptr );
++            samplespeed = LITTLE32( read32( ptr ) );
+             BitsPerSample = ( unsigned )*( ptr + 4 );
+             Channels = ( unsigned )*( ptr + 5 );
+-            Format = ( unsigned )LITTLE16( *( unsigned short * )( ptr + 6 ) );
++            Format = ( unsigned )LITTLE16( read16( ptr + 6 ) );
+ 
+             if ( ( BitsPerSample == 8 ) && ( Channels == 1 || Channels == 2 ) &&
+                ( Format == VOC_8BIT ) )
+@@ -2655,7 +2659,7 @@ int MV_PlayLoopedVOC
+    voice->bits        = 8;
+    voice->channels    = 1;
+    voice->GetSound    = MV_GetNextVOCBlock;
+-   voice->NextBlock   = ptr + LITTLE16(*( unsigned short * )( ptr + 0x14 ));
++   voice->NextBlock   = ptr + LITTLE16( read16( ptr + 0x14 ) );
+    voice->DemandFeed  = NULL;
+    voice->LoopStart   = NULL;
+    voice->LoopCount   = 0;
