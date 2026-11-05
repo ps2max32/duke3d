@@ -296,7 +296,7 @@ void showframe(void) {
     mx_prof_stop();
     mx_prof_report(4000);
 #endif
-    int r = mxgl_screenshot("host:duke3d.tga");
+    int r = mxgl_screenshot("duke3d.tga");
     mx_printf("ps2: %d frames, slowest second %d fps, %d fields dropped, picture %d\n", frames, ps2_fps_min, ps2_dropped, r);
     mx_printf("ps2: GS late %u, EE late %u fields\n", mx_gs.missed, mx_gs.starved);
     if (mxgl_mode_flags() & MXGL_BEAM)
@@ -413,8 +413,6 @@ int handleevents(void) {
   /* X is Enter too: the menus' */
   if ((held ^ last) & MX_PAD_CROSS)
     ps2_key(0x1c, (held & MX_PAD_CROSS) != 0);
-  if (held & ~last & MX_PAD_R3)
-    mxgl_show_stats = !mxgl_show_stats;
   last = held;
   u8 st[4];
   int look = script_look();

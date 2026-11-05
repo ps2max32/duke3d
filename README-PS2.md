@@ -22,7 +22,7 @@ second and the fields dropped, then the test end marker. `ARGS` is added to the 
 (`-nosetup -v2 -l1 -s2`: a level straight away). Without it the game starts at its logos and
 menu. Other variables: `PLAY=1` walks, turns, looks and fires by script, unhurt, and logs each
 frame that took more than a field; `PLAY=2` presses X through the menus; `PLAY` also has a watchdog that ends the run with `status=4` and the addresses where it was when frames stop; `STATS=1` shows
-libgl's counters (R3 too); `PROF=1` profiles the second half of a run, `PROF=n` from frame n
+libgl's counters (L3 + R3 too); `PROF=1` profiles the second half of a run, `PROF=n` from frame n
 (`libs/maxsdk/tools/prof.py`); `MODE=n` sets libgl's mode whatever the settings say (1 NTSC, 2
 PAL, 3 1080i, +256 beam racing, +512 24-bit); `KEYS=sdddx` presses pad keys by script from frame
 300, one each 30 frames (s, x, o, u, d, l, r, `.` none).
