@@ -46,7 +46,7 @@ DCFLAGS  := $(TARGET) $(OPT) -std=gnu99 -w -MMD -fno-common -ffunction-sections 
             -nostdlibinc -isystem $(P)/include -isystem $(PICOLIBC)/include -D__PS2__ -D_GNU_SOURCE -DNDEBUG \
             -DGL_GLEXT_PROTOTYPES -DUSE_POLYMOST=1 -DUSE_OPENGL=2 -DRENDERTYPESDL=1 -DHAVE_PS2 \
             -I$(JB)/include -I$(JB)/src -I$(JM) -I$(JA)/include -I$(JA)/src -I$(HERE)/src -I$(P) \
-            -I$(OUT)/gen -I$(MXGL_INC) -I$(MAXSDK)/include $(MXGL_DEFS) $(EXTRA_CFLAGS)
+            -I$(OUT)/gen -I$(MXGL_INC) -I$(MAXSDK)/ee/include $(MXGL_DEFS) $(EXTRA_CFLAGS)
 # the FPU has no doubles (ps2/ps2_float.h)
 FLOATFLAGS := -cl-single-precision-constant -include $(P)/ps2_float.h
 
@@ -83,7 +83,7 @@ $(OUT)/ps2/%.o: $(P)/%.c $(CDEPS)
 
 # maxsdk's libc glue with its read, write and _exit renamed: ps2/ps2_posix.c
 # has the POSIX ones
-$(OUT)/libc/glue.o: $(MAXSDK)/libc/glue.c $(PICOLIBC_A) $(HERE)/Makefile
+$(OUT)/libc/glue.o: $(MAXSDK)/ee/libc/glue.c $(PICOLIBC_A) $(HERE)/Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(filter-out -ffreestanding,$(CFLAGS)) -nostdlibinc -isystem $(PICOLIBC)/include \
 	  -Dread=mx_glue_read -Dwrite=mx_glue_write -D_exit=mx_glue_exit -c $< -o $@
@@ -105,7 +105,7 @@ $(OUT)/duke3d.elf: $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(MX_LIB) $(MX_CRT0) $(MX_L
 
 $(PICOLIBC_A):
 	@mkdir -p $(LIBOUT)/picolibc
-	sed "s|@LLVM@|$(LLVM)|g" $(MAXSDK)/libc/cross-r5900.txt.in > $(LIBOUT)/picolibc/cross.txt
+	sed "s|@LLVM@|$(LLVM)|g" $(MAXSDK)/ee/libc/cross-r5900.txt.in > $(LIBOUT)/picolibc/cross.txt
 	meson setup --wipe $(LIBOUT)/picolibc/build-meson $(PICOLIBC_SRC) \
 	  --cross-file $(LIBOUT)/picolibc/cross.txt --prefix=$(PICOLIBC) -Dmultilib=false \
 	  -Dpicocrt=false -Dsemihost=false -Dtests=false -Dthread-local-storage=false \
