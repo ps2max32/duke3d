@@ -19,6 +19,8 @@ LIBOUT   := $(PS2MAX)/build/apps/duke3d
 OUT      ?= $(LIBOUT)
 # all in physical memory: the game fits, and PCSX2's recompiler has no VM
 MX_MEMORY ?= phys
+# under mx-kernel, all in core (docs/kernel.md in maxsdk)
+MX_KERNEL ?= 1
 all: $(OUT)/duke3d.elf
 include $(MXGL)/mk/mxgl.mk
 include $(MAXSDK)/mk/maxsdk.mk
