@@ -32,7 +32,6 @@
 void mx_exit(int status) __attribute__((noreturn));
 
 void ps2_end(int status) {
-  mx_printf("@@PS2TEST_END@@ status=%d\n", status);
   mx_exit(status);
 }
 
