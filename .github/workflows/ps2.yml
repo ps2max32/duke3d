@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     container: ghcr.io/ps2max32/ps2max:latest
     steps:
       # git first: the submodules, and ps2/patches.sh applies the PS2's patches to them
@@ -22,12 +22,12 @@ jobs:
         run: |
           apk add --no-cache git
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Submodules
         run: make submodules
       - name: Build
         run: make -j$(nproc) OUT=$PWD/out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: duke3d-${{ github.sha }}
           path: |
