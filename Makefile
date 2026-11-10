@@ -2,7 +2,8 @@
 #
 #   make submodules      the submodules, with ps2/patches applied (once)
 #   make [OUT=<dir>] [FRAMES=n] [ARGS="-v1 -l1"]   $(OUT)/duke3d.elf
-#   make run             duke3d.elf in PCSX2 with the game data in
+#   make run             duke3d.elf in PCSX2 (in VM: through the kernel's EMU
+#                        build, MX_LOADER, interpreted) with the game data in
 #                        build/pcsx2-test/duke3d (DUKEDATA: a directory with
 #                        DUKE3D.GRP, copied there once)
 #
@@ -17,9 +18,10 @@ MAXSDK_OUT ?= $(PS2MAX)/build/libs/maxsdk
 MXGL     ?= $(PS2MAX)/libs/libgl
 LIBOUT   := $(PS2MAX)/build/apps/duke3d
 OUT      ?= $(LIBOUT)
-# all in physical memory: the game fits, and PCSX2's recompiler has no VM
-MX_MEMORY ?= phys
-# under mx-kernel, all in core (docs/kernel.md in maxsdk)
+# the program in VM (ld/maxsdk-vm.ld), started by the kernel (apps/mxos), paged
+# to host:duke3d.swp; MX_MEMORY=phys: all in physical memory, under the kernel all the same
+MX_MEMORY ?= vm
+# phys: under mx-kernel, all in core (docs/kernel.md in maxsdk)
 MX_KERNEL ?= 1
 all: $(OUT)/duke3d.elf
 include $(MXGL)/mk/mxgl.mk
@@ -94,14 +96,14 @@ $(OUT)/libc/glue.o: $(MAXSDK)/ee/libc/glue.c $(PICOLIBC_A) $(HERE)/Makefile
 # MODE: libgl's mode whatever the settings (1 NTSC, 2 PAL, 3 1080i, +256 beam racing, +512 24-bit)
 # KEYS: pad keys by script from frame 300, each 30 frames: s, x, o, u, d, l, r, . none
 RUNCFG := $(OUT)/gen/runcfg.h
-$(shell mkdir -p $(OUT)/gen; printf '#define PS2_FRAMES %s\n#define PS2_ARGS "%s"\n#define PS2_PLAY %s\n#define PS2_PROF %s\n#define PS2_STATS %s\n#define PS2_MODE (%s)\n#define PS2_KEYS "%s"\n' \
-  '$(or $(FRAMES),0)' '$(ARGS)' '$(or $(PLAY),0)' '$(or $(PROF),0)' '$(or $(STATS),0)' '$(or $(MODE),-1)' '$(KEYS)' > $(RUNCFG).new; \
+$(shell mkdir -p $(OUT)/gen; printf '#define PS2_FRAMES %s\n#define PS2_ARGS "%s"\n#define PS2_PLAY %s\n#define PS2_PROF %s\n#define PS2_STATS %s\n#define PS2_MODE (%s)\n#define PS2_KEYS "%s"\n#define PS2_VM %s\n' \
+  '$(or $(FRAMES),0)' '$(ARGS)' '$(or $(PLAY),0)' '$(or $(PROF),0)' '$(or $(STATS),0)' '$(or $(MODE),-1)' '$(KEYS)' '$(if $(filter vm,$(MX_MEMORY)),1,0)' > $(RUNCFG).new; \
   cmp -s $(RUNCFG).new $(RUNCFG) || mv $(RUNCFG).new $(RUNCFG); rm -f $(RUNCFG).new)
 
 # -z muldefs: ps2/ps2_softfp.c's double arithmetic before librt's
 $(MXGL_OBJS): $(PICOLIBC_A)
 $(OUT)/duke3d.elf: $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD) $(LIBC_LIBS)
-	$(call link,$@,-z muldefs --defsym=__stack_size=0x100000 $(MX_CRT0) $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(LIBC_LIBS))
+	$(call link,$@,-z muldefs --defsym=__mx_stack_size=0x100000 $(MX_CRT0) $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(LIBC_LIBS))
 
 $(PICOLIBC_A):
 	@mkdir -p $(LIBOUT)/picolibc
@@ -122,7 +124,12 @@ RUNDIR   := $(PS2MAX)/build/pcsx2-test
 run: $(OUT)/duke3d.elf
 	@mkdir -p $(RUNDIR)/duke3d
 	@[ -f $(RUNDIR)/duke3d/duke3d.grp ] || cp -v "$(DUKEDATA)/DUKE3D.GRP" $(RUNDIR)/duke3d/duke3d.grp
+ifeq ($(MX_MEMORY),vm)
+	cp $(OUT)/duke3d.elf $(RUNDIR)/duke3d.elf && echo "host:duke3d.elf" > $(RUNDIR)/mxload.txt
+	PCSX2_EE=interp $(PCSX2_RUN) $(MX_LOADER) $(or $(TIMEOUT),1800)
+else
 	$(PCSX2_RUN) $(OUT)/duke3d.elf $(or $(TIMEOUT),300)
+endif
 
 clean:
 	rm -rf $(filter-out $(LIBOUT)/picolibc,$(wildcard $(OUT)/*))

@@ -168,6 +168,11 @@ void ps2_level_loading(void) {
 }
 void ps2_level_loaded(void) {
   extern int ps2_tex_failed;
+  if (mx_vm_active()) { /* the break in VM; its frames: the VM's report at the end */
+    mx_printf("ps2: level loaded: break at %u KB of VM, %d textures left out\n",
+              (u32)((u8 *)mx_sbrk(0) - (u8 *)mx_vm_base()) >> 10, ps2_tex_failed);
+    return;
+  }
   u8 *lo = (u8 *)mx_heap_start();
   mx_printf("ps2: level loaded: heap %u of %u KB, %d textures left out\n",
             (u32)((u8 *)mx_sbrk(0) - lo) >> 10, (u32)((u8 *)mx_heap_end() - lo) >> 10, ps2_tex_failed);
@@ -214,23 +219,26 @@ static u64 sec_at;
 static int sec_frames;
 int ps2_fps_min = 1000, ps2_dropped;
 #if PS2_PLAY
-/* the test script's watchdog: where the program is when frames stop */
+/* the test script's watchdog: where the program is when frames stop. A timer
+   handler: it, what it reads and its strings in core (MX_MEMORY=vm) */
 #include <mx/timer.h>
-static int frames;
-static void watch(void *arg) {
+static int frames MX_CORE_DATA;
+static int watch_last MX_CORE_DATA, watch_idle MX_CORE_DATA;
+static u32 watch_at[10] MX_CORE_DATA;
+static char watch_stuck[] MX_CORE_DATA = "stuck at %08x\n";
+static char watch_end[] MX_CORE_DATA = "@@PS2TEST_END@@ status=4\n";
+MX_CORE_FN static void watch(void *arg) {
   extern volatile u32 mx__irq_epc;
-  static int last, idle;
-  if (frames != last || frames < 100) {
-    last = frames, idle = 0;
+  if (frames != watch_last || frames < 100) {
+    watch_last = frames, watch_idle = 0;
     return;
   }
-  static u32 at[10];
-  if (++idle >= 20 && idle < 30)
-    at[idle - 20] = mx__irq_epc;
-  if (idle == 30) {
+  if (++watch_idle >= 20 && watch_idle < 30)
+    watch_at[watch_idle - 20] = mx__irq_epc;
+  if (watch_idle == 30) {
     for (int i = 0; i < 10; i++)
-      mx_printf("stuck at %08x\n", at[i]);
-    mx_printf("@@PS2TEST_END@@ status=4\n");
+      mx_printf(watch_stuck, watch_at[i]);
+    mx_printf(watch_end);
   }
 }
 #endif
@@ -452,6 +460,15 @@ int handleevents(void) {
 }
 
 /* ---- main ----------------------------------------------------------------- */
+
+/* maxsdk's virtual memory (<mx/vm.h>): the game and its malloc in VM, paged
+   to a swap file next to the ELF; what the GS reads by DMA (libgl's arenas
+   and textures) pinned. MX_MEMORY=phys: no VM, everything in the 32 MiB */
+#if PS2_VM
+const struct mx_vm_config mx_vm_config = {
+    .swap = "duke3d.swp",
+};
+#endif
 
 int main(int argc, char **argv) {
   static char line[256] = "duke3d " PS2_ARGS;
