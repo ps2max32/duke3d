@@ -1,4 +1,4 @@
-# .github/workflows/ps2.yml of ps2max32/doom (template: ci/app.yml of ps2max32/docker).
+# .github/workflows/ps2.yml of ps2max32/duke3d (template: ci/app.yml of ps2max32/docker).
 # Builds with the commits its ps2max.deps names (LLVM, maxsdk, ...), through
 # the reusable build of ps2max32/docker. Every push and PR: the game as an
 # artifact; a tag v*: also a GitHub release with it.
@@ -16,6 +16,6 @@ jobs:
   ps2:
     uses: ps2max32/docker/.github/workflows/build.yml@main
     with:
+      setup: make submodules
       artifacts: |
         out/*.elf
-        out/*.wad
