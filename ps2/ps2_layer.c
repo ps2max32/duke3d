@@ -222,12 +222,12 @@ int ps2_fps_min = 1000, ps2_dropped;
 /* the test script's watchdog: where the program is when frames stop. A timer
    handler: it, what it reads and its strings in core (MX_MEMORY=vm) */
 #include <mx/timer.h>
-static int frames MX_CORE_DATA;
-static int watch_last MX_CORE_DATA, watch_idle MX_CORE_DATA;
-static u32 watch_at[10] MX_CORE_DATA;
-static char watch_stuck[] MX_CORE_DATA = "stuck at %08x\n";
-static char watch_end[] MX_CORE_DATA = "@@PS2TEST_END@@ status=4\n";
-MX_CORE_FN static void watch(void *arg) {
+static int frames MX_IRQ_DATA;
+static int watch_last MX_IRQ_DATA, watch_idle MX_IRQ_DATA;
+static u32 watch_at[10] MX_IRQ_DATA;
+static char watch_stuck[] MX_IRQ_DATA = "stuck at %08x\n";
+static char watch_end[] MX_IRQ_DATA = "@@PS2TEST_END@@ status=4\n";
+MX_IRQ_FN static void watch(void *arg) {
   extern volatile u32 mx__irq_epc;
   if (frames != watch_last || frames < 100) {
     watch_last = frames, watch_idle = 0;
