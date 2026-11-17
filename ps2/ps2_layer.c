@@ -138,8 +138,16 @@ static int field_rate = 60, video_pending;
 
 void ps2_video_change(void) { video_pending = 1; }
 int ps2_video_flags(void) { return mxgl_mode_flags(); }
+/* the mode set, for the menu (its font: capitals): "PAL 640 X 512", "1080I 1920 X 1080" */
 const char *ps2_video_name(void) {
-  return mxgl_mode() == MXGL_1080I ? "1920 X 1080" : mxgl_mode() == MXGL_PAL ? "PAL 640 X 512" : "NTSC 640 X 448";
+  static char s[32];
+  int w, h;
+  mxgl_screen(&w, &h);
+  snprintf(s, sizeof s, "%s %d X %d", mxgl_mode_name(), w, h);
+  for (char *p = s; *p; p++)
+    if (*p >= 'a' && *p <= 'z')
+      *p -= 'a' - 'A';
+  return s;
 }
 void ps2_tex_apply(void) {
   mxgl_texture_quality(ps2_tex_quality);
@@ -194,7 +202,7 @@ int setvideomode(int x, int y, int c, int fs) {
   }
   /* a frame a field: the field rate, no faster (the mode set it off) */
   mx_frame_vsync(1);
-  field_rate = mxgl_mode() == MXGL_PAL ? 50 : 60;
+  field_rate = mxgl_hz();
   mxgl_screen(&xres, &yres);
   bpp = 32, fullscreen = 1;
   frameplace = 0, bytesperline = 0, imageSize = 0, numpages = 127;
