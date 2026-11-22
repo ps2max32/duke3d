@@ -105,6 +105,16 @@ $(MXGL_OBJS): $(PICOLIBC_A)
 $(OUT)/duke3d.elf: $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD) $(LIBC_LIBS)
 	$(call link,$@,-z muldefs --defsym=__mx_stack_size=0x100000 $(MX_CRT0) $(OBJS) $(MXGL_OBJS) $(HLSL_OBJS) $(LIBC_LIBS))
 
+# The store's package (ps2max32/store docs/index-format.md, "The package"):
+# duke3d/ with the program and its game.ini (ps2/game.ini: the GRP in
+# PS2MAX/DATA/duke3d), no game data. The CI releases it on a tag v*
+package: $(OUT)/duke3d-ps2max.zip
+$(OUT)/duke3d-ps2max.zip: $(OUT)/duke3d.elf $(HERE)/ps2/game.ini
+	rm -rf $(OUT)/pkg && mkdir -p $(OUT)/pkg/duke3d
+	$(LLVM)/llvm-strip -o $(OUT)/pkg/duke3d/duke3d.elf $(OUT)/duke3d.elf
+	cp $(HERE)/ps2/game.ini $(OUT)/pkg/duke3d/
+	cd $(OUT)/pkg && python3 -c 'import sys, os, zipfile; z = zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED); [z.write(os.path.join(d, f)) for d, _, fs in sorted(os.walk(sys.argv[2])) for f in sorted(fs)]; z.close()' $@ duke3d
+
 $(PICOLIBC_A):
 	@mkdir -p $(LIBOUT)/picolibc
 	sed "s|@LLVM@|$(LLVM)|g" $(MAXSDK)/ee/libc/cross-r5900.txt.in > $(LIBOUT)/picolibc/cross.txt

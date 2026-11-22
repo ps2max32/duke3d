@@ -17,5 +17,8 @@ jobs:
     uses: ps2max32/docker/.github/workflows/build.yml@main
     with:
       setup: make submodules
+      # the program, and the store's package of it (released on a tag v*)
+      build: make -j$(nproc) OUT=$PWD/out all package
       artifacts: |
         out/*.elf
+        out/*-ps2max.zip

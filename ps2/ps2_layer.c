@@ -24,6 +24,8 @@
 #include <mx/prof.h>
 #include <mxgl.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "runcfg.h"
@@ -478,13 +480,29 @@ const struct mx_vm_config mx_vm_config = {
 };
 #endif
 
+/* -data <dir>: the GRP's directory (game.ini's data=, {data}: PS2MAX/DATA/
+   duke3d), searched for it (-j); what the game writes (its config, saves)
+   next to the ELF. Without it as before: all of it in ./duke3d. The
+   program's other arguments go to the game. */
 int main(int argc, char **argv) {
   static char line[256] = "duke3d " PS2_ARGS;
   static const char *args[32];
+  static char jdir[160];
   int n = 0;
   for (char *p = strtok(line, " "); p && n < 31; p = strtok(NULL, " "))
     args[n++] = p;
-  chdir("/duke3d");
+  const char *data = NULL;
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "-data") && i + 1 < argc)
+      data = argv[++i];
+    else if (n < 31)
+      args[n++] = argv[i];
+  }
+  if (data && n < 31) {
+    snprintf(jdir, sizeof jdir, "-j%s", data);
+    args[n++] = jdir;
+  } else
+    chdir("/duke3d");
   _buildargc = n;
   _buildargv = args;
   baselayer_init();

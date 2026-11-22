@@ -42,7 +42,9 @@ void _exit(int status) { mx_glue_exit(status); }
 static char cwd[PATH_MAX] = "/";
 
 /* path (absolute or relative) as an absolute one with "." and ".." gone,
-   in out (PATH_MAX); returns out */
+   in out (PATH_MAX); returns out. A ".." above the ELF's directory stays
+   ("/../DATA/duke3d": the kernel takes it relative to the game's directory,
+   game.ini's data=) */
 static char *normalize(const char *path, char *out) {
   char tmp[PATH_MAX * 2];
   if (path[0] == '/')
@@ -51,6 +53,7 @@ static char *normalize(const char *path, char *out) {
     snprintf(tmp, sizeof tmp, "%s/%s", cwd, path);
   char *o = out;
   *o++ = '/';
+  int ups = 0; /* the ".."s it starts with */
   for (char *p = tmp; *p;) {
     while (*p == '/')
       p++;
@@ -60,7 +63,10 @@ static char *normalize(const char *path, char *out) {
     size_t n = (size_t)(e - p);
     if (n == 0 || (n == 1 && p[0] == '.')) {
     } else if (n == 2 && p[0] == '.' && p[1] == '.') {
-      if (o > out + 1) {
+      if (o == out + 1 + 3 * ups) {
+        memcpy(o, "../", 3);
+        o += 3, ups++;
+      } else if (o > out + 1) {
         o--;
         while (o > out + 1 && o[-1] != '/')
           o--;
