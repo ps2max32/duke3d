@@ -178,14 +178,9 @@ void ps2_level_loading(void) {
 }
 void ps2_level_loaded(void) {
   extern int ps2_tex_failed;
-  if (mx_vm_active()) { /* the break in VM; its frames: the VM's report at the end */
-    mx_printf("ps2: level loaded: break at %u KB of VM, %d textures left out\n",
-              (u32)((u8 *)mx_sbrk(0) - (u8 *)mx_vm_base()) >> 10, ps2_tex_failed);
-    return;
-  }
-  u8 *lo = (u8 *)mx_heap_start();
-  mx_printf("ps2: level loaded: heap %u of %u KB, %d textures left out\n",
-            (u32)((u8 *)mx_sbrk(0) - lo) >> 10, (u32)((u8 *)mx_heap_end() - lo) >> 10, ps2_tex_failed);
+  /* the break in VM; its frames: the VM's report at the end */
+  mx_printf("ps2: level loaded: break at %u KB of VM, %d textures left out\n",
+            (u32)((u8 *)mx_sbrk(0) - (u8 *)mx_vm_base()) >> 10, ps2_tex_failed);
 }
 
 /* the screen: the mode of the settings (MODE: a test's, whatever they say) */
@@ -230,7 +225,7 @@ static int sec_frames;
 int ps2_fps_min = 1000, ps2_dropped;
 #if PS2_PLAY
 /* the test script's watchdog: where the program is when frames stop. A timer
-   handler: it, what it reads and its strings in core (MX_MEMORY=vm) */
+   handler: it, what it reads and its strings in core */
 #include <mx/timer.h>
 static int frames MX_IRQ_DATA;
 static int watch_last MX_IRQ_DATA, watch_idle MX_IRQ_DATA;
@@ -470,15 +465,6 @@ int handleevents(void) {
 }
 
 /* ---- main ----------------------------------------------------------------- */
-
-/* maxsdk's virtual memory (<mx/vm.h>): the game and its malloc in VM, paged
-   to a swap file next to the ELF; what the GS reads by DMA (libgl's arenas
-   and textures) pinned. MX_MEMORY=phys: no VM, everything in the 32 MiB */
-#if PS2_VM
-const struct mx_vm_config mx_vm_config = {
-    .swap = "duke3d.swp",
-};
-#endif
 
 /* -data <dir>: the GRP's directory (game.ini's data=, {data}: PS2MAX/DATA/
    duke3d), searched for it (-j); what the game writes (its config, saves)

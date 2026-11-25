@@ -8,7 +8,7 @@ changes to the game are under `__PS2__`, those to the submodules are in `ps2/pat
 ```
 make submodules                      the submodules, with the patches applied (once, first)
 make [FRAMES=n] [ARGS="-v1 -l1 -s2"] $(OUT)/duke3d.elf (build/apps/duke3d)
-make run                             copies DUKE3D.GRP (DUKEDATA) to build/pcsx2-test/duke3d
+make run                             copies DUKE3D.GRP (DUKEDATA) and gm.bnk to build/pcsx2-test/duke3d
                                      and runs it in PCSX2 (in VM: through the kernel's EMU build)
 ```
 
@@ -68,13 +68,13 @@ game (`BYTEVERSION`), so there is no timedemo: `PLAY=1` is what the rates below 
 | Float | `double` is `float` in Polymost (`ps2/ps2_float.h`): the FPU has no doubles. The GL headers come before that define: their `GLclampd` must stay double. Walls are clipped to the view's sides as to the close plane, so their planes come from points on the screen, where float is enough; the sector scan is in 64-bit integers. `engine.c` keeps double: its tables are checked. `ps2/ps2_softfp.c` is what double costs elsewhere: compiler-rt's calls for the usual case, the same results |
 | Hangs | A float too large for an `int` becomes `INT_MAX` on the R5900 (`INT_MIN` on x86): `drawpoly` checks the range of its texture repeats, whose loop would never pass it |
 | Culling | Walls outside the view or behind what is drawn are left before their planes; the sky's strips are those in view; `domost` stops at the end of a wall's span, and joins only the strips it touched (the list is sorted by x) |
-| Memory | The game in VM (`MX_MEMORY=vm`), started by the kernel (`apps/mxos`), libgl in core, paged to `duke3d.swp` next to the ELF; its 1 MiB main stack is `--defsym=__mx_stack_size`. In the levels tried nothing is swapped: E1L1 and E3L8 run within the 32 MB (they were tried without a swap file); E1L1 drops 8 fields of 1500 against 5 with `MX_MEMORY=phys` (all in physical memory, also under the kernel), from about 650,000 TLB refills. On PCSX2 `make run` starts it through the kernel's EMU build, interpreted (its recompiler has no VM). In physical memory: the program 11.6 MB, the tile cache 6 MB (`MAXCACHE1DSIZE`, 16 in the original), libgl's textures about 6 to 9 MB in the levels tried. Beam racing takes 2 MiB more: the fullest level, E3L8, has about 0.7 MB left. Textures are freed at each level's start (`ps2_level_loading`), or they would add up level after level; a texture's header has no hightile path, a level has thousands. Out of memory a texture shows white; `ps2: out of memory` and `textures left out` say so |
+| Memory | The game in VM (an MXOS program), started by the kernel (`apps/mxos`), libgl in core, paged to the system's swap file; its 1 MiB main stack is `--defsym=__mx_stack_size`. In the levels tried nothing is swapped: E1L1 and E3L8 run within the 32 MB (they were tried without a swap file); E1L1 drops 8 fields of 1500, with about 650,000 TLB refills. On PCSX2 `make run` starts it through the kernel's EMU build, interpreted (its recompiler has no VM). In physical memory: the program 11.6 MB, the tile cache 6 MB (`MAXCACHE1DSIZE`, 16 in the original), libgl's textures about 6 to 9 MB in the levels tried. Beam racing takes 2 MiB more: the fullest level, E3L8, has about 0.7 MB left. Textures are freed at each level's start (`ps2_level_loading`), or they would add up level after level; a texture's header has no hightile path, a level has thousands. Out of memory a texture shows white; `ps2: out of memory` and `textures left out` say so |
 | Files | POSIX on the IOP file server (`ps2/ps2_posix.c`, Half-Life's); `/` is `host:`, the game's directory `/duke3d` |
 | Input | pad 0 as the keyboard: d-pad or left stick up/down move, left/right turn (d-pad) or strafe (left stick), right stick turns and looks, R1 fire, L1 open, X jump (Enter in the menus), O crouch, square use the item, triangle next weapon, R2/L2 inventory, START menu, SELECT map, R3 the counters |
-| Sound | JFAudioLib's mixer at 22050 Hz 16-bit stereo, a `PS2Drv` PCM driver on maxsdk's stream (`mx/snd.h`, audsrv), filled from `handleevents` (no threads) |
+| Sound | JFAudioLib's mixer at 22050 Hz 16-bit stereo, a `PS2Drv` PCM driver on maxsdk's stream (`mx/snd.h`, mxsnd on the IOP), filled from `handleevents` (no threads) |
+| Music | maxsdk's MIDI player (`mx/midi.h`) on the IOP, in place of JFAudioLib's sequencer: the game hands over the song, the IOP reads it (EMIDI too) and the SPU2 plays the notes, so it goes on during a level's load. The instruments are `gm.bnk` next to `duke3d.grp`: the Makefile makes it with maxsdk's `tools/sf2bank` from `SF2` (default `/usr/share/sounds/sf2/TimGM6mb.sf2`, GPL-2, Debian's `timgm6mb-soundfont`), samples at 32 kHz at most, 1.7 MB of SPU RAM. Without it the game has no music |
 
-Not done yet: music (MIDI: JFAudioLib has no synthesiser for the PS2, the driver is the null
-one), multiplayer, the OSD console's keys, analog movement. The menus take 30 ms a frame on a
+Not done yet: multiplayer, the OSD console's keys, analog movement. The menus take 30 ms a frame on a
 real PS2, EE time, so they run at about 29 frames a second over a level.
 
 ## Frame rate
