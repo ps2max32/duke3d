@@ -136,3 +136,111 @@ index 395347d..204a324 100644
     voice->DemandFeed  = NULL;
     voice->LoopStart   = NULL;
     voice->LoopCount   = 0;
+diff --git a/src/music.c b/src/music.c
+index 721a025..e191b66 100644
+--- a/src/music.c
++++ b/src/music.c
+@@ -32,6 +32,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ #include <stdlib.h>
+ #include "sndcards.h"
+ #include "drivers.h"
++#ifdef HAVE_PS2
++#include "driver_ps2.h"
++#endif
+ #include "music.h"
+ #include "midi.h"
+ #include "asssys.h"
+@@ -160,6 +163,10 @@ int MUSIC_Init
+       {
+       // A failure to autodetect falls back to no sound.
+       ASS_MIDISoundDriver = ASS_NoSound;
++#ifdef HAVE_PS2
++      // the IOP plays the songs: not JFAudioLib's sequencer
++      PS2Drv_Music_Init();
++#endif
+       MIDI_SetMidiFuncs( &MUSIC_MidiFunctions );
+       return MUSIC_Ok;
+       }
+@@ -181,6 +188,9 @@ int MUSIC_Shutdown
+    )
+ 
+    {
++#ifdef HAVE_PS2
++   PS2Drv_Music_Shutdown();
++#endif
+    MIDI_StopSong();
+ 
+    /*if ( MUSIC_FadeTask != NULL )
+@@ -243,6 +253,9 @@ void MUSIC_SetVolume
+ 
+    if ( ASS_MIDISoundDriver != -1 )
+       {
++#ifdef HAVE_PS2
++      PS2Drv_Music_Volume( volume );
++#endif
+       MIDI_SetVolume( volume );
+       }
+    }
+@@ -330,7 +343,11 @@ int MUSIC_SongPlaying
+    )
+ 
+    {
++#ifdef HAVE_PS2
++   return( PS2Drv_Music_Playing() );
++#else
+    return( MIDI_SongPlaying() );
++#endif
+    }
+ 
+ 
+@@ -346,7 +363,11 @@ void MUSIC_Continue
+    )
+ 
+    {
++#ifdef HAVE_PS2
++   PS2Drv_Music_Pause( 0 );
++#else
+    MIDI_ContinueSong();
++#endif
+    }
+ 
+ 
+@@ -362,7 +383,11 @@ void MUSIC_Pause
+    )
+ 
+    {
++#ifdef HAVE_PS2
++   PS2Drv_Music_Pause( 1 );
++#else
+    MIDI_PauseSong();
++#endif
+    }
+ 
+ 
+@@ -379,6 +404,9 @@ int MUSIC_StopSong
+ 
+    {
+    MUSIC_StopFade();
++#ifdef HAVE_PS2
++   PS2Drv_Music_Stop();
++#endif
+    MIDI_StopSong();
+    MUSIC_SetErrorCode( MUSIC_Ok );
+    return( MUSIC_Ok );
+@@ -401,6 +429,16 @@ int MUSIC_PlaySong
+    {
+    int status;
+ 
++#ifdef HAVE_PS2
++   status = PS2Drv_Music_Play( song, length, loopflag );
++   if ( status != MUSIC_Ok )
++      {
++      MUSIC_SetErrorCode( MUSIC_MidiError );
++      return( MUSIC_Warning );
++      }
++   return( MUSIC_Ok );
++#endif
++
+    (void)length;
+ 
+    MIDI_StopSong();

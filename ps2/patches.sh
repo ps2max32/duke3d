@@ -3,7 +3,7 @@
 # upstream's commits): ps2/patches/<name>.patch for <name>.
 #
 #   ps2/patches.sh apply     applies each patch, unless it is applied already
-#   ps2/patches.sh export    writes each submodule's changes (git diff) to its
+#   ps2/patches.sh export    writes each submodule's changes (git diff HEAD, staged or not) to its
 #                            patch, after editing them
 set -e
 cd "$(dirname "$0")/.."
@@ -22,7 +22,7 @@ apply)
 	done ;;
 export)
 	for s in $SUBMODULES; do
-		git -C "$s" diff > "ps2/patches/$s.patch"
+		git -C "$s" diff HEAD > "ps2/patches/$s.patch"
 		[ -s "ps2/patches/$s.patch" ] || rm -f "ps2/patches/$s.patch"
 	done ;;
 *)
